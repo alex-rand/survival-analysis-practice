@@ -1,0 +1,6 @@
+tab:glimpse
+url-your-book-url-like-httpsbookdown.orgyihuibookdown
+basic-exploration
+how-does-time-to-event-vary-with-dosage-amount
+section
+how-does-time-to-event-vary-with-prison-status
