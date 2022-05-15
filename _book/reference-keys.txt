@@ -6,3 +6,17 @@ section
 how-does-time-to-event-vary-with-prison-status
 how-does-time-to-event-vary-with-dosage
 tab:unnamed-chunk-2
+tab:unnamed-chunk-3
+tab:anova
+does-the-effect-of-dosage-amount-on-time-to-event-vary-by-prison-status
+tab:unnamed-chunk-5
+tab:unnamed-chunk-7
+tab:unnamed-chunk-4
+tab:unnamed-chunk-6
+tab:unnamed-chunk-8
+is-the-proportional-hazards-assumption-justified-given-the-possibility-of-different-baseline-hazards-across-clinics
+parametric-models-vs-cox-model
+bayesian-spline-model-cubic-royston-parmar-via-rstanarm
+tab:unnamed-chunk-14
+bayesian-spline-model-via-rstanarm
+tab:unnamed-chunk-20

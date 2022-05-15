@@ -7,10 +7,12 @@
 ## Basic Exploration
 
 ```{r get-ready, echo=FALSE, message=FALSE}
-
-library(tidyverse)
-library(survival)
-library(patchwork)
+pacman::p_load(
+  "tidyverse", 
+  "survival",
+  "survminer",
+  "flexsurv"
+)
 
 source("utils.R")
 
@@ -148,7 +150,7 @@ kernel_smoothed_full_sample
 
 ```
 
-Things are looking pretty consistent here. You have the typical thing of hazard being low at first but then increasing at psychologically-salient anniversaries, IE the two-month mark and the one-year mark. Things also seem to really take off at the 500 day mark as well.
+Things are looking pretty consistent here. You have the typical thing of hazard being low at first but then increasing at psychologically-salient anniversaries, IE the two-month mark and the one-year mark. Things also seem to really take off at the 500 day mark as well. Overall it looks sort of like a parabola.
 
 Based on the data available, there are a few things I'm curious about:
 
@@ -161,6 +163,35 @@ Let's explore each of these questions.
 
 ## How does time-to-event vary with prison status?
 
+First let's have a look at some stratified Kaplan-Meier curves to get a sense of the empirical relationship between `prison` and time-to-event:
+
+```{r echo = FALSE}
+
+# Fit the new stratified Kaplan-Meier curve
+km.prison.strata <- survfit(surv_object ~ 1 + strata(prison), data = dat)
+
+# Plot 
+survminer::ggsurvplot(
+  fit = km.prison.strata,
+  conf.int = TRUE,
+  risk.table = TRUE,
+  surv.median.line = "v",
+  strata = "prison",
+  linetype = 1,
+  legend = "none",
+  palette = c("deepskyblue4", "burlywood4"),
+  title = "Kaplan-Meier Estimated Survival Curve",
+  xlab = "", 
+  ylab = "",
+  ggtheme = theme_bw()
+) 
+
+```
+
+Looks like prison people saw more events in the first month, then non-prison people caught up and things leveled-off for a short while, then once again prison people started seeing more events for most of the 2-years after the treatment. The curves cross around the 800-day mark, but this could simply be the product of noise due to the much smaller risk set at this late phase. The median lifetime (vertical dotted line) for non-prisoners seems to be about 125 days longer than the median lifetime for prisoners.
+
+Cool. Now let's think about modelling this relationship between time-to-event and prison status. It would be nice to use a basic Cox regression, because that way we don't need to make any assumptions about the shape of baseline hazard. But to use a Cox regression, we need to make sure that the proportional hazards assumption is defensible. Is it defensible?
+
 For starters, we can plot the cumulative hazard curves for the two groups in isolation. If the cumulative hazard curves aren't generally parallel on the log scale then when it comes time to model we should probably think about doing one of the things Singer and Willett suggest we do when we seem to have different baselines, between strata, IE either:
 
 1.  Do a stratified Cox regression;
@@ -170,10 +201,7 @@ So let's plot the stratified log cumulative hazard curves. To do this, we can st
 
 ```{r, echo = TRUE}
 
-# Fit the new stratified Kaplan-Meier curve
-km.prison.strata <- survfit(surv_object ~ 1 + strata(prison), data = dat)
-
-# Use the new stratified Kaplan-Meier estimates to create a new table with the columns we need, namely:
+# Use the stratified Kaplan-Meier estimates to create a new table with the columns we need, namely:
 #    1. Prison status;
 #    2. Time-to-event for each person;
 #    3. Log cumulative hazard at each event time;
@@ -224,7 +252,22 @@ survminer::ggcoxzph(zph_object_cox_prison, point.col = "cadetblue4")
 
 ```
 
-This all suggests that the effect of being in prison might vary over time a bit, but the Schoenfeld p-value isn't below .05, so I guess we are justified in not worrying about that. Our conclusion is that we can feel good about adopting the proportional hazards assumption for the `prison` variable.
+This all suggests that the effect of being in prison might vary over time a bit, but the Schoenfeld p-value isn't below .05, so I guess we are justified in not worrying about that. Our conclusion is that we can feel good about adopting the proportional hazards assumption for the `prison` variable. So let's fit a preliminary Cox model with `prison` as the only predictor, and see what the model thinks:
+
+```{r echo = TRUE}
+broom::tidy(cox.prison.only, exponentiate = TRUE) %>%
+  
+  mutate(p.value = as.character(p.value)) %>% 
+  
+  select(-statistic) %>% 
+  
+  janitor::clean_names("title") %>% 
+  
+  knitr::kable(caption = "") %>% 
+  kableExtra::kable_styling(bootstrap_options = "striped")
+```
+
+The model thinks that being in prison increases your Hazard by about 20% in relative terms at any given point in time. But it has a pretty wide standard error, with an estimate of 1 (no effect) falling just over one standard error from the estimate. Hence the non-significant p-value.
 
 If instead we had found that prison varies a bunch over time then we *could* do a stratified regression by prison. But Singer and Willett point out that if we do this then we won't get a parameter estimate for the influence of prison, and that's a parameter estimate it would be nice to have. So instead we can relax the proportional hazards assumption by interacting prison with time. We're not gonna do this now because our Schoenfeld residuals say we don't have to but the authors of the **Survival** package [have written some nice documentation about precisely how to do this](https://cran.r-project.org/web/packages/survival/vignettes/timedep.pdf).
 
@@ -259,6 +302,8 @@ broom::tidy(cox.dose.only, exponentiate = TRUE) %>%
   
   mutate(p.value = as.character(p.value)) %>% 
   
+  select(-statistic) %>% 
+  
   janitor::clean_names("title") %>% 
   
   knitr::kable(caption = "") %>% 
@@ -269,9 +314,9 @@ broom::tidy(cox.dose.only, exponentiate = TRUE) %>%
 
 Based on the estimated hazard ratio, the model thinks that each additional unit of dosage reduces hazard by about 3.5% in relative terms. So the model expects that if a person with a dosage of 0 has 50% hazard, then a person with a dosage of 1 will have a hazard of about (.50 \* .965) \~ 48%, a person with a dosage of 10 will have a hazard of about (.50 \* .965^10^) \~ 35%, and a person with a dosage of 100 will have a hazard of about (.50 \* .965^100^) \~ 1.4%. This is what the model thinks.
 
-Also wow, that is a very tiny p-value, which suggests that given the size and variance of the sample, the model's estimate of the treatment effect does not seem compatible with a *true* effect of 0, b In other words, if we assume that our sample of people is a perfect representation of some infinitely large group of people, then the model things that if we did this same experiment over and over and over infinitely many times, each time drawing a different random group of people from that infinite group of people of the same size as the experiment we actually did, then we would only see the effect we saw (or a bigger one) like 2 of every billion experiments. This is a pretty weird thing to say, but this is how p-values work.
+Also wow, that is a very tiny p-value, which suggests that given the size and variance of the sample, the model's estimate of the treatment effect does not seem compatible with a *true* effect of 0. In other words, if we assume that our sample of people is a perfect representation of some infinitely large group of people, then the model thinks that if we did this same experiment over and over and over infinitely many times, each time drawing a different random group of people from that infinite group of people of the same size as the experiment we actually did, then we would only see the effect we saw (or a bigger one) like 2 of every billion experiments. This is a pretty weird thing to say, but this is how p-values work.
 
-So the model thinks the effect is of the treatment is big, with higher dosage reducing hazard. Another nice way of visualizing the treatment effect is to choose some theoretically interesting values of dosage and generate the model's survival curves for them. The way to do this is to... EXPLAIN
+So the model thinks the effect is of the treatment is big, with higher dosage reducing hazard. Another nice way of visualizing the treatment effect is to choose some theoretically interesting values of dosage and generate the model's predicted survival curves for them. Since the model's only predictor is `dose`, we can simulate some fake data with the dosage amount's we're curious about, and then use the **survminer** package's `surv_adjustedcurves` function to plot the 'recovered' survival curves for them. (I'm not super clear on the most-used approaches for deriving these 'recovered' curves. Singer and Willett talk about the method where you replicate the process of getting your Kaplan-Meier calculations, but using the Cox-model-based risk scores in the risk set to determine the probabilities in each period rather than merely the size of the risk set. Not sure if this is what is happening here, but the `surv_adjustedcurves` documentation gets into it.)
 
 ```{r different-doses, echo = TRUE}
 
@@ -303,6 +348,714 @@ bind_rows(
 
 ```
 
-Could be nice to do some martingale residuals of prison status against the dosage only model, to see if prison status is worth including despite not being a juicy p-value.
+This squid-like plot illustrates the degree to which the model thinks dosage matters in shaping event times.
 
-<https://github.com/alex-rand/survival-analysis-practice.git>
+So the effect of dosage is powerful. And in the previous section we also saw that prison status seems to be correlated with time-to-event. So let's try a model where we include `dose` and `prison` together in the model and see if the effects are any different than in the models where each is the sole predictor:
+
+```{r echo = TRUE}
+
+# Fit the model with the two predictors together
+cox.prison.dose <- coxph(surv_object ~ 1 + dose + prison, data = dat)
+
+# Clean the model outputs for visualization
+list(
+  cox.prison.only,
+  cox.dose.only,
+  cox.prison.dose
+) %>% 
+  
+  map(broom::tidy, exponentiate = TRUE, conf.int = TRUE) %>% 
+  
+  map(~ mutate(., model = toString(term))) %>%
+
+  bind_rows() %>% 
+  
+  # Could compress into one line but I find it clearer to have multiple steps
+  mutate(
+    model = str_replace_all(model, ", ", " + "),
+    model = ifelse(!str_detect(model, "\\+"), paste(model, "only"), model),
+    model = str_to_sentence(model)
+  ) %>% 
+
+  # Plot
+  ggplot(aes(x = term, y=estimate, ymin=conf.low, ymax=conf.high, colour = model)) +
+  geom_pointrange(position = position_dodge(width = .2)) +
+  geom_hline(yintercept=1, lty=2) +  
+  coord_flip() +  
+  xlab("Predictor") + 
+  ylab("Hazard Ratio (95% CI)") +
+  scale_colour_manual(values=c("deepskyblue4", "springgreen4", "burlywood4")) +
+  theme_bw() +
+  theme(
+    plot.title = element_text(face = "bold", size = 12),
+    legend.background = element_rect(fill = "white", size = 4, colour = "white"),
+    legend.justification = c(0, 1),
+    legend.position = "bottom",
+    axis.ticks = element_line(colour = "grey70", size = 0.2),
+    panel.grid.major = element_line(colour = "grey70", size = 0.2),
+    panel.grid.minor = element_blank()
+  )
+
+```
+
+Basically no change in either predictor by including them both in the model together. Another way of seeing whether `prison` is worth including in the model is with -2LL significance tests. Here's how this works:
+
+1.  We assume changes in -2LL are chi-squared distributed;
+2.  We calculate the difference in -2LL between the model with only `dose` and the model with both `dose` and `prison`;
+3.  We ask whether that difference is statistically significant based on a 95%-threshold hypothesis test under a chi-squared distribution.
+
+We can do all of this with R's basic `anova()` function:
+
+```{r anova}
+anova(cox.prison.dose) %>% 
+  
+  broom::tidy() %>% 
+  
+  select(-df) %>% 
+  
+  mutate(p.value = as.character(round(p.value, 9))) %>% 
+
+  rename(
+    "-2LL"               = logLik,
+    "Difference in -2LL" = statistic,
+    "Predictor"          = term
+  ) %>% 
+  
+  knitr::kable(caption = "") %>% 
+  kableExtra::kable_styling(bootstrap_options = "striped")
+
+```
+
+Here we see that once `dose` is in the model, including `prison` has only a tiny effect on the model's goodness-of-fit as measured by the -2LL, and this change is not statistically significant according to our chi-squared significance test. So we could feel ok about excluding `prison` from the model. But should we? I think the real answer is that it depends on our background knowledge, and what we're trying to accomplish with this analysis. Despite the fact that `prison` doesn't explain much variance within levels of treatment, we might still want to include it in the model if:
+
+1.  We are especially interested in making inferences about the role of `prison` in shaping the time-to-event;
+2.  We're working from a causal model that tells us that controlling for `prison` is important for getting an unbiased effect of another predictor we're interested in. For example, maybe we think `prison` is a common cause of the treatment and the outcome. If this were true, then controlling for prison would be a good idea to help us feel good about our estimate of the treatment.
+
+Another way of getting at the question of whether `prisoner` is worth including in the model would have been to look at the plot of the Martingale residuals of the `dose`-only model against values of `prisoner`. But this doesn't really work when the predictor you're curious about, IE `prisoner`, is categorical as opposed to continuous.
+
+## Does the effect of dosage amount on time-to-event vary by prison status?
+
+So we've established that including both `prison` as a fixed effect in a model that already includes `dose` doesn't really improve the model's goodness of fit. But maybe dosage amounts worked *differently* for people in prison and people not in prison. In other words, maybe there's an interaction between `prison` and `dose`.
+
+We can explore this by including a simple interaction in the Cox model and seeing whether it improves goodness of fit. We'll just reuse the methods we've already used above, namely:
+
+1.  Looking at tables of regression outputs;
+2.  Looking at forest plots;
+3.  Using chi-squared significance testing on -2LL of the various models.
+
+```{r echo = FALSE}
+
+# Fit the new model with the interaction effect
+cox.interaction <- coxph(surv_object ~ 1 + dose*prison, data = dat)
+
+# Regression Table
+cox.interaction %>% 
+  
+  broom::tidy(exponentiate = TRUE) %>% 
+  
+  mutate(p.value = as.character(round(p.value, 7))) %>% 
+  
+  select(-statistic) %>% 
+  
+  janitor::clean_names("title") %>% 
+  
+  knitr::kable(caption = "") %>% 
+  kableExtra::kable_styling(bootstrap_options = "striped")
+
+
+```
+
+Whoa -- looks like including the interaction effect has completely flipped the relationship between `prison` and time-to-event. With the interaction effect included, the model thinks that being in prison *reduces* your risk of seeing the event. This despite the fact that the interaction effect itself is rather tiny, and that its 95% interval contains 1, IE is consistent with the hypothesis that there is no effect. This shows that estimates and p-values aren't everything.
+
+Let's get a closer look with a comparative forest plot:
+
+```{r echo = FALSE}
+
+# Forest Plot
+list(
+  cox.prison.only,
+  cox.dose.only,
+  cox.prison.dose,
+  cox.interaction
+) %>% 
+  
+  map(broom::tidy, exponentiate = TRUE, conf.int = TRUE) %>% 
+  
+  map(~ mutate(., model = toString(term))) %>%
+  
+  bind_rows() %>% 
+  
+  # Could compress into one line but I find it clearer to have multiple steps
+  mutate(
+    model = str_replace_all(model, ", ", " + "),
+    model = ifelse(!str_detect(model, "\\+"), paste(model, "only"), model),
+    model = str_to_sentence(model)
+  ) %>% 
+  
+  # Plot
+  ggplot(aes(x = term, y=estimate, ymin=conf.low, ymax=conf.high, colour = model)) +
+  geom_pointrange(position = position_dodge(width = .2)) +
+  geom_hline(yintercept=1, lty=2) +  
+  coord_flip() +  
+  xlab("Predictor") + 
+  ylab("Hazard Ratio (95% CI)") +
+  scale_colour_manual(values=c("deepskyblue4", "springgreen4", "burlywood4", "antiquewhite4")) +
+  theme_bw() +
+  theme(
+    plot.title = element_text(face = "bold", size = 12),
+    legend.background = element_rect(fill = "white", size = 4, colour = "white"),
+    legend.justification = c(0, 1),
+    legend.position = "bottom",
+    axis.ticks = element_line(colour = "grey70", size = 0.2),
+    panel.grid.major = element_line(colour = "grey70", size = 0.2),
+    panel.grid.minor = element_blank()
+  )
+```
+
+Yup -- looks like the model with the interaction effect completely flips the model's mean estimate for `prison`. But it also makes it way more uncertain: just look at that giant 95% interval.
+
+Did including the interaction improve goodness of fit? We can do the same anova thing we did above:
+
+```{r echo = FALSE}
+
+# Anova
+anova(cox.interaction) %>% 
+  
+  broom::tidy() %>% 
+  
+  select(-df) %>% 
+  
+  mutate(p.value = as.character(round(p.value, 9))) %>% 
+  
+  rename(
+    "-2LL"               = logLik,
+    "Difference in -2LL" = statistic,
+    "Predictor"          = term
+  ) %>% 
+  
+  knitr::kable(caption = "") %>% 
+  kableExtra::kable_styling(bootstrap_options = "striped")
+```
+
+Including the interaction seems to improve goodness-of-fit more than including `prison` did, but the difference is still not statistically significant. But still, including it has produced a very drastic and important change in our inference! Once again, p-values are not everything.
+
+Interaction effects are hard to interpret based on squinting at numbers alone. So lastly, we can get a sense of what the model now believes by plotting a 'triptych', as recommended by McElreath. We'll simulate some fake data to visualize the impact of the interaction. This is largely a copy-paste of the squid-monster code above, but now we're faceting:
+
+```{r echo = TRUE}
+
+bind_rows(
+  survminer::surv_adjustedcurves(cox.interaction, data = tibble(dose = 0, prison = 0)) %>% mutate(dosage = "Dose = 0", prison = "Non-Prison"),
+  survminer::surv_adjustedcurves(cox.interaction, data = tibble(dose = 40, prison = 0)) %>% mutate(dosage = "Dose = 40", prison = "Non-Prison"),
+  survminer::surv_adjustedcurves(cox.interaction, data = tibble(dose = 80, prison = 0)) %>% mutate(dosage = "Dose = 80", prison = "Non-Prison"),
+  survminer::surv_adjustedcurves(cox.interaction, data = tibble(dose = 0, prison = 1)) %>% mutate(dosage = "Dose = 0", prison = "Prison"),
+  survminer::surv_adjustedcurves(cox.interaction, data = tibble(dose = 40, prison = 1)) %>% mutate(dosage = "Dose = 40", prison = "Prison"),
+  survminer::surv_adjustedcurves(cox.interaction, data = tibble(dose = 80, prison = 1)) %>% mutate(dosage = "Dose = 80", prison = "Prison"),
+) %>% 
+  
+  # Plot
+  ggplot(aes(x = time, y = surv, group = prison, colour = prison)) +
+  geom_point(size = 1) +
+  geom_line(size = 1) +
+  scale_colour_manual(values=c("deepskyblue4", "burlywood4")) +
+  theme_bw() + 
+  theme(
+    plot.title = element_text(face = "bold", size = 12),
+    legend.background = element_rect(fill = "white", size = 4, colour = "white"),
+    legend.justification = c(0, 1),
+    legend.position = "bottom",
+    axis.ticks = element_line(colour = "grey70", size = 0.2),
+    panel.grid.major = element_line(colour = "grey70", size = 0.2),
+    panel.grid.minor = element_blank(),
+    legend.title = element_blank() 
+  ) +
+    
+    facet_wrap(~dosage)
+
+```
+
+By including the interaction, we've essentially told the model that the relationship between dosage and time-to-event depends on whether you're in prison or not. So it seems like what's happening is that the model thinks prisoners are better off in the absence of any treatment or at low values of treatment (hence the flipped effect estimate for the fixed effect `prison`), but then as you increase the dosage, the benefits accrue more to non-prisoners than to prisoners. Taken literally, I think the interaction effect is saying "prisoner relative hazard increases as you increase the dosage".
+
+What to make of this? I'm not really sure. [Frank Harrell says that we're not really supposed to try and interpret the main effects in a model with an interaction](https://stats.stackexchange.com/questions/546128/interpreting-coefficient-changes-in-cox-ph-model-involving-interactions?noredirect=1&lq=1), so the fact that the direction of the effect of `prison` totally switches is maybe not actually an important thing. But on the other hand, I'm dying to know why the model thinks this is how the interaction works.
+
+One thing that might help us understand is to look at some descriptive plots for different levels of dosage, stratified by `prison`. The idea is that maybe at low dosages the prison people actually *are* better-off, and the opposite is true at higher doses. So here's what I'll do:
+
+1.  Code a new `dosage_group` variable with some arbitrary cutoffs: we'll say you're a 'low' dosage at 45 or less, a 'medium' between 45 and 70, and a 'high' above 70.
+2.  Draw some new Kaplan-Meier curves to see how the survival curves are different for prison and non-prison people *within each dosage group*. Rather than rely on **survminer** to draw the Kaplan-Meier curves like I did above, this time I'll make the plots myself for greater control of aesthetics.
+
+```{r echo = TRUE}
+
+# Create a new dataset with arbitrary 'dosage groups' 
+dat_dose_strat <- dat %>%
+
+  mutate(dosage_group = case_when(
+    dose <= 45 ~ "low",
+    dose > 45 & dose <= 70 ~ "medium",
+    as.numeric(dose) > 70 ~ "high"
+  )) 
+
+# Create survival object
+surv_object_dosage_groups <- Surv(dat_dose_strat$days_survival, dat_dose_strat$status)
+
+# Get Kaplan-Meier estimates
+km.dosage.groups <- survfit(surv_object_dosage_groups ~ 1 + prison + strata(dosage_group), data = dat_dose_strat)
+
+# Create survival object
+surv_object_dosage_groups <- Surv(dat_dose_strat$days_survival, dat_dose_strat$status)
+
+# Get Kaplan-Meier estimates
+km.dosage.groups <- survfit(surv_object_dosage_groups ~ 1 + prison + strata(dosage_group), data = dat_dose_strat)
+
+# Clean and plot
+km.dosage.groups %>% 
+  
+  broom::tidy() %>% 
+  
+  janitor::clean_names() %>% 
+  
+  mutate(
+    prison       = str_extract(strata, "\\d"),
+    dosage_group = factor(str_extract(strata, "high|medium|low"), levels=c("low", "medium", "high"))
+  ) %>% 
+
+  ggplot(aes(x = time, y = estimate, group = prison, colour = prison, fill = prison)) +
+  geom_point(shape = 3, size = 2) + 
+  geom_line(size = 1) + 
+  geom_ribbon(aes(ymin = conf_low, ymax = conf_high), alpha=0.2, linetype = 0) +
+  scale_colour_manual(values=c("deepskyblue4", "burlywood4")) +
+  scale_fill_manual(values=c("deepskyblue4", "burlywood4")) +
+  theme_bw() + 
+  theme(
+    plot.title = element_text(face = "bold", size = 12),
+    legend.background = element_rect(fill = "white", size = 4, colour = "white"),
+    legend.justification = c(0, 1),
+    legend.position = "bottom",
+    axis.ticks = element_line(colour = "grey70", size = 0.2),
+    panel.grid.major = element_line(colour = "grey70", size = 0.2),
+    panel.grid.minor = element_blank()
+  ) +
+  facet_wrap(~dosage_group)
+
+
+  
+```
+
+These janky Kaplan-Meier wannabes actually illustrate why the model fits the interaction the way that it does: we see that empirically, prisoners are actully better off at low doses of the treatment, even though when we *average across dosage*, as we implicitly did above with the Kaplan-Meier curves stratified by `prison` only, prisoners are worse-off across the board. This is a nice reveal that illustrates the importance of exploring interactions! But also, notice that there are fewer low-dosage prisoners overall, so this pattern could just be noise. Either way, it makes sense that the model would flip the direction of the effect of prison as a way of representing this difference between dosage groups. It doesn't mean we have to take the model literally when it does this: it is just a way for the model to say what it is trying to say about the interaction, IE to say that prison people are at greater relative risk at higher doses compared to at lower doses. Don't get sucked into the trap of interpreting the parameter estimates as causal.
+
+Now we have an idea why the model with the interaction thinks what it thinks. But the model with the interaction fails the likelihood ratio test, so we don't favour it on the grounds of goodness-of-fit. And we don't really have a clear causal theory for why this interaction would exist. So which model should we believe? Maybe neither, but we can keep them both in mind.
+
+## Is the proportional hazards assumption justified given the possibility of different baseline hazards across clinics?
+
+Let's replicate our workflow above to plot the log cumulative hazards and Schoenfeld residuals for the `clinic` variable to see whether the proportional hazards assumption seems to hold.
+
+```{r echo=FALSE}
+
+# Get the new Kaplan-Meier estimates
+km.clinic.strata <- survfit(surv_object ~ 1 + strata(clinic), data = dat)
+
+# Construct a table with the data we need
+tibble(
+  clinic = as.factor(rep(c(1, 2), times = c(147, 68))),
+  time   = km.clinic.strata$time,
+  log_cumhaz = log(km.clinic.strata$cumhaz),
+  conf_lower = log(-log(km.clinic.strata$lower)),
+  conf_upper = log(-log(km.clinic.strata$upper))
+) %>% 
+  
+  # Plot
+  ggplot(aes(x = time, y = log_cumhaz, colour = clinic, group = clinic, fill = clinic)) +
+  geom_point(shape = 3, size = 2) + 
+  geom_line(size = 1) +
+  geom_ribbon(aes(ymin = conf_lower, ymax = conf_upper), alpha=0.3, linetype = 0) +
+  scale_colour_manual(values = c("cadetblue4","burlywood4")) +
+  scale_fill_manual(values = c("cadetblue4","burlywood4")) +
+  theme_bw() + 
+  theme(
+    plot.title = element_text(face = "bold", size = 12),
+    legend.background = element_rect(fill = "white", size = 4, colour = "white"),
+    legend.justification = c(0, 1),
+    legend.position = "bottom",
+    axis.ticks = element_line(colour = "grey70", size = 0.2),
+    panel.grid.major = element_line(colour = "grey70", size = 0.2),
+    panel.grid.minor = element_blank()
+  )
+
+```
+
+Looks *kind of* proportional for the most part, except that they're pretty neck-and-neck for the first couple months, and then people in clinic 1 start seeing more events than people in clinic 2 as of about day 500.
+
+And now the Schoenfeld residuals:
+
+```{r echo = FALSE}
+# Fit a Cox regression
+cox.clinic.only <- coxph(surv_object ~ 1 + clinic, data = dat)
+
+# Get a zph object, which takes a Cox model object and returnslots of nice diagnostic information specifically about the proportional hazards assumption of that Cox model
+zph_object_cox_clinic <- cox.zph(cox.clinic.only)
+
+# Plot the Schoenfeld residuals with Survminer
+survminer::ggcoxzph(zph_object_cox_clinic, point.col = "cadetblue4")
+
+```
+
+You can sort of see how there is a downwards sloping trend in the plot at later times, which I think is just the residuals picking up on what we saw in the cumulative hazard curves, IE that people in clinic 1 start seeing way more events than people at clinic 2 at later times. And it looks like the p-value of the Schoenfeld residuals is significant, so we're supposed to not feel great about the proportional hazards assumption for `clinic`. Whuh-oh.
+
+What to do? Since this is clustered data we could do a frailty model, but there's only two clusters, which is going to make for a pretty noisy estimate of the cluster-level variation. Maybe better to just do a stratified regression here. Singer and Willett prefer time-varying effects as a way of dealing with what seem to be different baseline hazards across clusters because with stratified Cox you lose the ability to model that variable. But they also say that if the clustering variable isn't really of interest to you then sure, go ahead and do a Stratified cox. So that's what I'll do.
+
+```{r echo = TRUE}
+cox.dose.prison.clinic <- coxph(surv_object ~ 1 + dose + prison + strata(clinic), data = dat)
+
+cox.interaction.clinic <- coxph(surv_object ~ 1 + dose + prison + dose:prison + strata(clinic), data = dat)
+
+```
+
+Now let's see how the estimates and their uncertainties are changed, if at all, by stratifying our regression on `clinic`. We can plot the table of regression outputs and also reuse the code from the forest plot above:
+
+```{r echo = FALSE}
+
+# Create the table we need
+dplt <- 
+  
+  list(
+    cox.prison.only,
+    cox.dose.only,
+    cox.prison.dose,
+    cox.interaction,
+    cox.dose.prison.clinic,
+    cox.interaction.clinic
+  ) %>% 
+  
+  map(broom::tidy, exponentiate = TRUE, conf.int = TRUE, strata=TRUE) %>% 
+  
+  bind_rows() %>% 
+  
+  bind_cols(
+    tibble(
+      model = rep(
+        c("Prison only",
+          "Dose only",
+          "Prison + dose",
+          "Prison + dose + prison:dose",
+          "prison + dose (strat by clinic)",
+          "Prison + dose + prison:dose (strat by clinic)"),
+        times = c(1, 1, 2, 3, 2, 3)
+      ))) %>% 
+  
+  select(model, term, estimate, starts_with("conf")) 
+
+# Plot the table
+dplt %>%
+  
+  knitr::kable(caption = "") %>% 
+  kableExtra::kable_styling(bootstrap_options = "striped")
+
+```
+
+```{r echo = FALSE}
+
+# Forest plot
+dplt %>% 
+  
+  ggplot(aes(x = term, y=estimate, ymin=conf.low, ymax=conf.high, colour = model)) +
+  geom_pointrange(position = position_dodge(width = .4)) +
+  geom_hline(yintercept=1, lty=2) +  
+  coord_flip() +  
+  xlab("Predictor") + 
+  ylab("Hazard Ratio (95% CI)") +
+  scale_colour_manual(values=c(
+    "pink",
+    "springgreen4", 
+    "burlywood4", 
+    "antiquewhite4", 
+    "deepskyblue4", 
+    "mediumpurple4")) +
+  theme_bw() +
+  theme(
+    plot.title = element_text(face = "bold", size = 12),
+    legend.background = element_rect(fill = "white", size = 4, colour = "white"),
+    legend.justification = c(0, 1),
+    legend.position = "bottom",
+    axis.ticks = element_line(colour = "grey70", size = 0.2),
+    panel.grid.major = element_line(colour = "grey70", size = 0.2),
+    panel.grid.minor = element_blank()
+  )
+
+
+```
+
+In the models without the interaction, it looks like stratifying by `clinic` makes the model think `prison` is even more hazardous. and in the models *with* the interaction, we see that the flip of the hazard ratio of `prison` is less pronounced than in the non-stratified model, and its 95% interval is way bigger. Based on what we saw above, this suggests to me that even when we stratify on `clinic`, prisoners may be doing every so slightly better than non-prisoners at low dosages, but less than when we pool everyone across clinics.
+
+But a main takeaway is that no matter what we do, the main treatment effect is remarkably stable. The treatment works.
+
+## Parametric Models vs Cox Model
+
+Just for fun, lets fit some parametric survival models and see how they compare with the Cox model in terms of goodness of fit. We'll try out exponential and Weibull proportional hazard models, as well as a log-logistic AFT. I don't have high hopes for the exponential or Weibull models because none of the curves thus far suggest to me a flat or strictly monotonic baseline hazard function, but the log-logistic could be interesting by giving us something more flexible.
+
+```{r echo = TRUE}
+
+m.weibull <- survreg(surv_object ~ dose + prison, dat, dist='weibull')
+m.exponential <- survreg(surv_object ~ dose + prison, dat, dist='exp')
+m.loglogistic <- survreg(surv_object ~ dose + prison, dat, dist = "loglogistic")
+
+```
+
+There's some tricky conversion we need to do to interpret our parametric estimates when we use the survival function, because the Weibull (and exponential, which is a special case of Weibull) results have the magic property of being able to be interpreted either as hazard ratios *or* acceleration factors. [This nice markdown document](https://rstudio-pubs-static.s3.amazonaws.com/5564_bc9e2d9a458c4660aa82882df90b7a6b.html) provides a walkthrough of the transformations required to move between these two interpretations.
+
+First let's see how the Weibull and exponential estimated hazard ratios stack up against our classic Cox regression from above:
+
+```{r echo = TRUE}
+
+bind_rows(
+  
+  # The Cox estimates
+  cox.prison.dose %>% 
+    
+    broom::tidy(exponentiate = TRUE, conf.int = TRUE) %>% 
+    
+    mutate(family = "Classic Cox"),
+  
+  # The parametric estimates
+  tribble(
+    ~model, ~family,
+    m.weibull, "Weibull",
+    m.exponential, "Exponential"
+  ) %>% 
+    
+    mutate(model = map(model, broom::tidy, conf.int = TRUE)) %>% 
+    
+    unnest(cols = c(model)) %>% 
+    
+    # Bring in the estimated scale parameters
+    mutate(scale_param = case_when(
+      family == "Exponential" ~ m.exponential$scale,
+      family == "Weibull" ~ m.weibull$scale
+    )) %>% 
+    
+    # Convert estimates to hazard ratios
+    mutate(
+      estimate  = exp(estimate * -1 * scale_param),
+      std.error = exp(std.error * -1 * scale_param),
+      conf.low = exp(conf.low * -1 * scale_param),
+      conf.high = exp(conf.high * -1 * scale_param)
+    )
+
+) %>% 
+  
+  filter(!term %in% c("Log(scale)", "(Intercept)")) %>% 
+  
+  ggplot(aes(x = term, y=estimate, ymin=conf.low, ymax=conf.high, colour = family)) +
+  geom_pointrange(position = position_dodge(width = .2)) +
+  geom_hline(yintercept=1, lty=2) +  
+  coord_flip() +  
+  xlab("Predictor") + 
+  ylab("Hazard Ratio (95% CI)") +
+  scale_colour_manual(values=c("deepskyblue4", "springgreen4", "burlywood4", "antiquewhite4")) +
+  theme_bw() +
+  theme(
+    plot.title = element_text(face = "bold", size = 12),
+    legend.background = element_rect(fill = "white", size = 4, colour = "white"),
+    legend.justification = c(0, 1),
+    legend.position = "bottom",
+    axis.ticks = element_line(colour = "grey70", size = 0.2),
+    panel.grid.major = element_line(colour = "grey70", size = 0.2),
+    panel.grid.minor = element_blank()
+  )
+```
+
+Interesting, seems like the parametric models both report smaller effects than the classic Cox, and the Weibull model is also much more confident in its estimates, having smaller standard errors. That seems odd to me, given that it has more parameters to estimate and therefore more parameters to be uncertain about.
+
+Now let's compare the three parametric models with respect to their estimated acceleration factors for each predictor. I find the conversions required between these different interpretations makes me feel confused sometimes, but the **rstanarm** documentation spells it out clearly:
+
+> "Under an AFT formulation the quantity exp (−βp(t)) is referred to as an acceleration factor and the quantity exp (βp(t)) is referred to as a survival time ratio."
+
+Cool. I find the idea of an acceleration factor more intuitive than a survival time ratio, so that's what I'll go with.
+
+```{r echo = FALSE}
+
+tribble(
+  ~model, ~family,
+  m.weibull, "Weibull",
+  m.exponential, "Exponential",
+  m.loglogistic, "Log-Logistic"
+) %>% 
+  
+  mutate(model = map(model, broom::tidy, conf.int = TRUE)) %>% 
+  
+  unnest(cols = c(model)) %>% 
+  
+  # Convert estimates to acceleration factors
+  mutate(
+    estimate  = exp(-estimate),
+    std.error = exp(-std.error),
+    conf.low = exp(-conf.low),
+    conf.high = exp(-conf.high)
+  ) %>% 
+  
+  filter(!term %in% c("Log(scale)", "(Intercept)")) %>% 
+  
+  ggplot(aes(x = term, y=estimate, ymin=conf.low, ymax=conf.high, colour = family)) +
+  geom_pointrange(position = position_dodge(width = .2)) +
+  geom_hline(yintercept=1, lty=2) +  
+  coord_flip() +  
+  xlab("Predictor") + 
+  ylab("Acceleration Factor (95% CI)") +
+  scale_colour_manual(values=c("springgreen4", "cadetblue4", "burlywood4")) +
+  theme_bw() +
+  theme(
+    plot.title = element_text(face = "bold", size = 12),
+    legend.background = element_rect(fill = "white", size = 4, colour = "white"),
+    legend.justification = c(0, 1),
+    legend.position = "bottom",
+    axis.ticks = element_line(colour = "grey70", size = 0.2),
+    panel.grid.major = element_line(colour = "grey70", size = 0.2),
+    panel.grid.minor = element_blank()
+  )
+
+```
+
+The log-logistic estimates seem to be more extreme than either of the other two models. And once again, the Weibull model is the most conservative and most confident in its estimate.
+
+We can also plot the different baseline hazard functions against each other?
+
+It would be nice to Would be nice to do a plot of the different 'recovered' survival curves against the 'empirical' Kaplan-Meier curve. Let's try that. I had some trouble constructing survival curves from the **survival** package's `survreg` objects, so here I've refit the models using the **flexsurv** package, which lets you construct survival curves in a straightforward way. I haven't just replaced the `survreg`s with `flexsurvreg`s because the two packages seem to report the scale and shape parameters differently, and I think the above workflow is worth keeping for posterity, given that the **survival** package is *the* canonical package.
+
+Ok, now for some survival curves:
+
+```{r, echo = FALSE}
+
+### Prepare the data 
+
+# Get the 'empirical' Kaplan-Meier curve
+km_survival <- tibble(
+  time   = km.full.sample$time,
+  est    = km.full.sample$surv,
+  upper  = km.full.sample$upper,
+  lower  = km.full.sample$lower,
+  family = "Kaplan-Meier"
+)
+
+# Get the Cox recovered survival curve
+cox.recovered.survfit <- survfit(cox.prison.dose)
+
+cox_recovered_survival <- tibble(
+  time   = cox.recovered.survfit$time,
+  est    = cox.recovered.survfit$surv,
+  upper  = cox.recovered.survfit$upper,
+  lower  = cox.recovered.survfit$lower,
+  family = "Classic Cox"
+) 
+  
+# Get the survival curves from the parametric models
+dplt <- tribble(
+  
+  ~model, ~family,
+  
+  # Fit Weibull with flexsurvreg for ease of plotting
+  flexsurv::flexsurvreg(
+    surv_object ~ dose + prison, 
+    anc = NULL, 
+    dat, 
+    dist='weibull'
+  ), "Weibull",
+  
+  # Fit Exponential
+  flexsurv::flexsurvreg(
+    surv_object ~ dose + prison, 
+    anc = NULL, 
+    dat, 
+    dist='exp'
+  ), "Exponential",
+  
+  # Fit Log-Logistic
+  flexsurv::flexsurvreg(
+    surv_object ~ dose + prison, 
+    anc = NULL, 
+    dat, 
+    dist='llogis'
+  ), "Log-Logistic AFT",
+
+) %>% 
+  
+  mutate(
+    model = map(model, summary),
+    model = map(model, as.data.frame)
+  ) %>% 
+  
+  unnest(cols = c(model)) %>% 
+  
+  rename(
+    "upper" = ucl,
+    "lower" = lcl
+  ) %>% 
+  
+  bind_rows(
+    km_survival,
+    cox_recovered_survival
+  ) 
+  
+### Plot
+dplt %>% 
+  
+  filter(family != "Kaplan-Meier") %>% 
+  
+  ggplot(aes(x = time, y = est, group = family, colour = family, fill = family)) +
+  geom_line() +
+  geom_line(data = . %>% filter(family == "Kaplan-Meier"), size = 1.5, colour = "black") +
+  geom_ribbon(aes(ymin = lower, ymax = upper), alpha=0.1, linetype = 0) +
+#  scale_colour_manual(values = c("cadetblue4","burlywood4")) +
+#  scale_fill_manual(values = c("cadetblue4","burlywood4")) +
+  theme_bw() + 
+  theme(
+    plot.title = element_text(face = "bold", size = 12),
+    legend.background = element_rect(fill = "white", size = 4, colour = "white"),
+    legend.justification = c(0, 1),
+    legend.position = "bottom",
+    axis.ticks = element_line(colour = "grey70", size = 0.2),
+    panel.grid.major = element_line(colour = "grey70", size = 0.2),
+    panel.grid.minor = element_blank()
+  ) +
+    facet_wrap(~family) +
+  
+  geom_line(data = dplt %>% 
+              filter(family == "Kaplan-Meier") %>% 
+              select(-family),
+            aes(x = time, y = est, group = NULL, colour = NULL, fill = NULL),
+              size = .5, colour = "black")
+  
+
+```
+
+The black curve is the Kaplan-Meier estimates from the full sample. All of the models seem to fit pretty well, albeit with different strengths and weaknesses. Cox consistently overestimates risk compared to the Kaplan-Meier curve, while the Exponential model tends to underestimate it. Weibull and Log-Logistic look very similar, with both models overestimating hazard at first and then crossing the Kaplan-Meier curve to underestimate it. Exponential and Log-Logistic both overestimate hazard at the last little bit, which makes sense given that the sample size gets pretty small over there.
+
+For the parametric models, we can also compare the log likelihoods and AICs to get a more methodical comparison of their goodnesses-of-fit. We can't include the Cox model here because it is fit by maximizing the *partial* likelihood, and you're not allowed to compare the likelihoods of models fit by maximizaing different likelihoods. This is the same reason why you're not allowed to compare the log likelihoods of an OLS model and a poisson model, for example: OLS is fit by maximizing the gaussian likelihood, while a poisson GLM is fit by maximizing the poisson likelihood.
+
+```{r echo = FALSE}
+
+tribble(
+  ~model,              ~`-2LL`,                   ~AIC,
+  "Exponential",  max(m.exponential$loglik),  AIC(m.exponential),
+  "Weibull",      max(m.weibull$loglik),      AIC(m.weibull),
+  "Log-Logistic", max(m.loglogistic$loglik),  AIC(m.loglogistic)
+) %>% 
+  
+  knitr::kable(caption = "") %>% 
+  kableExtra::kable_styling(bootstrap_options = "striped")
+```
+
+Seems like Weiull takes the cake and exponential comes in last, even when we penalize for the number of parameters in the model.
+
+What should we make of all of these comparisons? To my eye, it looks like the Cox model is the best fit to the data in that it hugs the Kaplan-Meier curve the closest compared to the other models. So the assumptions of flat horizontal hazard (exponential model), monotonic hazard (weibull model), and even the slightly more flexible possible bell-ish shaped hazard (log-logistic model) don't seem to fit the data as well. It is possible that the Cox model is overfitting and that these other models will have better out-of-sample predictive accuracy, but I don't know how to compare them in that way. Could maybe do a simulation test of some kind? Anyway, not gonna do that right now.
+
+## Bayesian Spline Model via rstanarm
+
+So none of our parametric models thus far have been able to beat Cox in terms of goodness of fit to the sample. And this actually makes sense because way back in the first section we plotted the kernel-smoothed approximation of baseline hazard, and it looked sort of like an upside down 'bathtub' parabola. Here it is again:
+
+```{r echo = FALSE}
+kernel_smoothed_full_sample
+
+```
+
+This bathtub shape suggests that people face high hazard at first, then it steadily falls to some valley, then steadily increases again. Maybe this pattern of baseline hazard is something an expert in this area would have anticipated purely based on their background knowledge, before seeing the data. If so, then it might have made sense to try some kind of parametric model. But this bathtub shape for baseline hazard is something that not even the more flexible log-logistic model can fit. So if we want to estimate baseline hazard in a way that captures our assumption of bathtubness, we'll need to go with something more flexible.
+
+Splines are flexible, so let's go for a spline model. Specifically, let's do a Bayesian one for fun.
+
+The choice of parametric baseline hazard (or baseline survival distribution for AFT models) is specified via the basehaz argument. For the M-spline ("ms") and B-spline ("bs") models additional options related to the spline degree δ, knot locations k, or degrees of freedom L can be specified as a list and passed to the basehaz_ops argument. For example, specifying basehaz = "ms" and basehaz_ops = list(degree = 2, knots = c(10,20)) would request a baseline hazard modelled using quadratic M-splines with two internal knots located at t = 10 and t = 20.

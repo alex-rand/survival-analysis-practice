@@ -23,7 +23,7 @@
 <meta name="author" content="Alex Rand" />
 
 
-<meta name="date" content="2022-05-09" />
+<meta name="date" content="2022-05-15" />
 
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -144,6 +144,10 @@ code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warni
 <li class="chapter" data-level="1.1" data-path="prison-addicts.html"><a href="prison-addicts.html#basic-exploration"><i class="fa fa-check"></i><b>1.1</b> Basic Exploration</a></li>
 <li class="chapter" data-level="1.2" data-path="prison-addicts.html"><a href="prison-addicts.html#how-does-time-to-event-vary-with-prison-status"><i class="fa fa-check"></i><b>1.2</b> How does time-to-event vary with prison status?</a></li>
 <li class="chapter" data-level="1.3" data-path="prison-addicts.html"><a href="prison-addicts.html#how-does-time-to-event-vary-with-dosage"><i class="fa fa-check"></i><b>1.3</b> How does time-to-event vary with dosage?</a></li>
+<li class="chapter" data-level="1.4" data-path="prison-addicts.html"><a href="prison-addicts.html#does-the-effect-of-dosage-amount-on-time-to-event-vary-by-prison-status"><i class="fa fa-check"></i><b>1.4</b> Does the effect of dosage amount on time-to-event vary by prison status?</a></li>
+<li class="chapter" data-level="1.5" data-path="prison-addicts.html"><a href="prison-addicts.html#is-the-proportional-hazards-assumption-justified-given-the-possibility-of-different-baseline-hazards-across-clinics"><i class="fa fa-check"></i><b>1.5</b> Is the proportional hazards assumption justified given the possibility of different baseline hazards across clinics?</a></li>
+<li class="chapter" data-level="1.6" data-path="prison-addicts.html"><a href="prison-addicts.html#parametric-models-vs-cox-model"><i class="fa fa-check"></i><b>1.6</b> Parametric Models vs Cox Model</a></li>
+<li class="chapter" data-level="1.7" data-path="prison-addicts.html"><a href="prison-addicts.html#bayesian-spline-model-via-rstanarm"><i class="fa fa-check"></i><b>1.7</b> Bayesian Spline Model via rstanarm</a></li>
 </ul></li>
 <li class="divider"></li>
 <li><a href="https://github.com/rstudio/bookdown" target="blank">Published with bookdown</a></li>
@@ -337,7 +341,7 @@ dose
 <span id="cb1-44"><a href="prison-addicts.html#cb1-44" aria-hidden="true" tabindex="-1"></a>  <span class="fu">ylab</span>(<span class="st">&quot;Smoothed Hazard&quot;</span>) <span class="sc">+</span></span>
 <span id="cb1-45"><a href="prison-addicts.html#cb1-45" aria-hidden="true" tabindex="-1"></a>  <span class="fu">theme_bw</span>()</span></code></pre></div>
 <p><img src="_main_files/figure-html/full-sample-plots-1.png" width="816" /><img src="_main_files/figure-html/full-sample-plots-2.png" width="816" /><img src="_main_files/figure-html/full-sample-plots-3.png" width="816" /></p>
-<p>Things are looking pretty consistent here. You have the typical thing of hazard being low at first but then increasing at psychologically-salient anniversaries, IE the two-month mark and the one-year mark. Things also seem to really take off at the 500 day mark as well.</p>
+<p>Things are looking pretty consistent here. You have the typical thing of hazard being low at first but then increasing at psychologically-salient anniversaries, IE the two-month mark and the one-year mark. Things also seem to really take off at the 500 day mark as well. Overall it looks sort of like a parabola.</p>
 <p>Based on the data available, there are a few things I’m curious about:</p>
 <ol style="list-style-type: decimal">
 <li>How does time-to-event vary with prison status?</li>
@@ -349,46 +353,47 @@ dose
 </div>
 <div id="how-does-time-to-event-vary-with-prison-status" class="section level2 hasAnchor" number="1.2">
 <h2><span class="header-section-number">1.2</span> How does time-to-event vary with prison status?<a href="prison-addicts.html#how-does-time-to-event-vary-with-prison-status" class="anchor-section" aria-label="Anchor link to header"></a></h2>
+<p>First let’s have a look at some stratified Kaplan-Meier curves to get a sense of the empirical relationship between <code>prison</code> and time-to-event:</p>
+<p><img src="_main_files/figure-html/unnamed-chunk-1-1.png" width="816" /></p>
+<p>Looks like prison people saw more events in the first month, then non-prison people caught up and things leveled-off for a short while, then once again prison people started seeing more events for most of the 2-years after the treatment. The curves cross around the 800-day mark, but this could simply be the product of noise due to the much smaller risk set at this late phase. The median lifetime (vertical dotted line) for non-prisoners seems to be about 125 days longer than the median lifetime for prisoners.</p>
+<p>Cool. Now let’s think about modelling this relationship between time-to-event and prison status. It would be nice to use a basic Cox regression, because that way we don’t need to make any assumptions about the shape of baseline hazard. But to use a Cox regression, we need to make sure that the proportional hazards assumption is defensible. Is it defensible?</p>
 <p>For starters, we can plot the cumulative hazard curves for the two groups in isolation. If the cumulative hazard curves aren’t generally parallel on the log scale then when it comes time to model we should probably think about doing one of the things Singer and Willett suggest we do when we seem to have different baselines, between strata, IE either:</p>
 <ol style="list-style-type: decimal">
 <li>Do a stratified Cox regression;</li>
 <li>Do time-varying effects.</li>
 </ol>
 <p>So let’s plot the stratified log cumulative hazard curves. To do this, we can start by getting the Kaplan-Meier estimates for the different strata. Then the resulting Kaplan-Meier fit object will contain everything we need to calculate log cumulative hazard and make a nice custom plot:</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb2-1"><a href="prison-addicts.html#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Fit the new stratified Kaplan-Meier curve</span></span>
-<span id="cb2-2"><a href="prison-addicts.html#cb2-2" aria-hidden="true" tabindex="-1"></a>km.prison.strata <span class="ot">&lt;-</span> <span class="fu">survfit</span>(surv_object <span class="sc">~</span> <span class="dv">1</span> <span class="sc">+</span> <span class="fu">strata</span>(prison), <span class="at">data =</span> dat)</span>
-<span id="cb2-3"><a href="prison-addicts.html#cb2-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-4"><a href="prison-addicts.html#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Use the new stratified Kaplan-Meier estimates to create a new table with the columns we need, namely:</span></span>
-<span id="cb2-5"><a href="prison-addicts.html#cb2-5" aria-hidden="true" tabindex="-1"></a><span class="co">#    1. Prison status;</span></span>
-<span id="cb2-6"><a href="prison-addicts.html#cb2-6" aria-hidden="true" tabindex="-1"></a><span class="co">#    2. Time-to-event for each person;</span></span>
-<span id="cb2-7"><a href="prison-addicts.html#cb2-7" aria-hidden="true" tabindex="-1"></a><span class="co">#    3. Log cumulative hazard at each event time;</span></span>
-<span id="cb2-8"><a href="prison-addicts.html#cb2-8" aria-hidden="true" tabindex="-1"></a><span class="co">#    4. Confidence intervals to sexy-up the plot.</span></span>
-<span id="cb2-9"><a href="prison-addicts.html#cb2-9" aria-hidden="true" tabindex="-1"></a><span class="fu">tibble</span>(</span>
-<span id="cb2-10"><a href="prison-addicts.html#cb2-10" aria-hidden="true" tabindex="-1"></a>  <span class="at">prison =</span> <span class="fu">as.factor</span>(<span class="fu">rep</span>(<span class="fu">c</span>(<span class="dv">0</span>, <span class="dv">1</span>), <span class="at">times =</span> <span class="fu">c</span>(<span class="dv">112</span>, <span class="dv">99</span>))),</span>
-<span id="cb2-11"><a href="prison-addicts.html#cb2-11" aria-hidden="true" tabindex="-1"></a>  <span class="at">time   =</span> km.prison.strata<span class="sc">$</span>time,</span>
-<span id="cb2-12"><a href="prison-addicts.html#cb2-12" aria-hidden="true" tabindex="-1"></a>  <span class="at">log_cumhaz =</span> <span class="fu">log</span>(km.prison.strata<span class="sc">$</span>cumhaz),</span>
-<span id="cb2-13"><a href="prison-addicts.html#cb2-13" aria-hidden="true" tabindex="-1"></a>  <span class="at">conf_lower =</span> <span class="fu">log</span>(<span class="sc">-</span><span class="fu">log</span>(km.prison.strata<span class="sc">$</span>lower)),</span>
-<span id="cb2-14"><a href="prison-addicts.html#cb2-14" aria-hidden="true" tabindex="-1"></a>  <span class="at">conf_upper =</span> <span class="fu">log</span>(<span class="sc">-</span><span class="fu">log</span>(km.prison.strata<span class="sc">$</span>upper))</span>
-<span id="cb2-15"><a href="prison-addicts.html#cb2-15" aria-hidden="true" tabindex="-1"></a>) <span class="sc">%&gt;%</span> </span>
-<span id="cb2-16"><a href="prison-addicts.html#cb2-16" aria-hidden="true" tabindex="-1"></a>  </span>
-<span id="cb2-17"><a href="prison-addicts.html#cb2-17" aria-hidden="true" tabindex="-1"></a>  <span class="co"># Plot</span></span>
-<span id="cb2-18"><a href="prison-addicts.html#cb2-18" aria-hidden="true" tabindex="-1"></a>  <span class="fu">ggplot</span>(<span class="fu">aes</span>(<span class="at">x =</span> time, <span class="at">y =</span> log_cumhaz, <span class="at">colour =</span> prison, <span class="at">group =</span> prison, <span class="at">fill =</span> prison)) <span class="sc">+</span></span>
-<span id="cb2-19"><a href="prison-addicts.html#cb2-19" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_point</span>(<span class="at">shape =</span> <span class="dv">3</span>, <span class="at">size =</span> <span class="dv">2</span>) <span class="sc">+</span> </span>
-<span id="cb2-20"><a href="prison-addicts.html#cb2-20" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_line</span>(<span class="at">size =</span> <span class="dv">1</span>) <span class="sc">+</span></span>
-<span id="cb2-21"><a href="prison-addicts.html#cb2-21" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_ribbon</span>(<span class="fu">aes</span>(<span class="at">ymin =</span> conf_lower, <span class="at">ymax =</span> conf_upper), <span class="at">alpha=</span><span class="fl">0.3</span>, <span class="at">linetype =</span> <span class="dv">0</span>) <span class="sc">+</span></span>
-<span id="cb2-22"><a href="prison-addicts.html#cb2-22" aria-hidden="true" tabindex="-1"></a>  <span class="fu">scale_colour_manual</span>(<span class="at">values =</span> <span class="fu">c</span>(<span class="st">&quot;cadetblue4&quot;</span>,<span class="st">&quot;burlywood4&quot;</span>)) <span class="sc">+</span></span>
-<span id="cb2-23"><a href="prison-addicts.html#cb2-23" aria-hidden="true" tabindex="-1"></a>  <span class="fu">scale_fill_manual</span>(<span class="at">values =</span> <span class="fu">c</span>(<span class="st">&quot;cadetblue4&quot;</span>,<span class="st">&quot;burlywood4&quot;</span>)) <span class="sc">+</span></span>
-<span id="cb2-24"><a href="prison-addicts.html#cb2-24" aria-hidden="true" tabindex="-1"></a>  <span class="fu">theme_bw</span>() <span class="sc">+</span> </span>
-<span id="cb2-25"><a href="prison-addicts.html#cb2-25" aria-hidden="true" tabindex="-1"></a>  <span class="fu">theme</span>(</span>
-<span id="cb2-26"><a href="prison-addicts.html#cb2-26" aria-hidden="true" tabindex="-1"></a>    <span class="at">plot.title =</span> <span class="fu">element_text</span>(<span class="at">face =</span> <span class="st">&quot;bold&quot;</span>, <span class="at">size =</span> <span class="dv">12</span>),</span>
-<span id="cb2-27"><a href="prison-addicts.html#cb2-27" aria-hidden="true" tabindex="-1"></a>    <span class="at">legend.background =</span> <span class="fu">element_rect</span>(<span class="at">fill =</span> <span class="st">&quot;white&quot;</span>, <span class="at">size =</span> <span class="dv">4</span>, <span class="at">colour =</span> <span class="st">&quot;white&quot;</span>),</span>
-<span id="cb2-28"><a href="prison-addicts.html#cb2-28" aria-hidden="true" tabindex="-1"></a>    <span class="at">legend.justification =</span> <span class="fu">c</span>(<span class="dv">0</span>, <span class="dv">1</span>),</span>
-<span id="cb2-29"><a href="prison-addicts.html#cb2-29" aria-hidden="true" tabindex="-1"></a>    <span class="at">legend.position =</span> <span class="st">&quot;bottom&quot;</span>,</span>
-<span id="cb2-30"><a href="prison-addicts.html#cb2-30" aria-hidden="true" tabindex="-1"></a>    <span class="at">axis.ticks =</span> <span class="fu">element_line</span>(<span class="at">colour =</span> <span class="st">&quot;grey70&quot;</span>, <span class="at">size =</span> <span class="fl">0.2</span>),</span>
-<span id="cb2-31"><a href="prison-addicts.html#cb2-31" aria-hidden="true" tabindex="-1"></a>    <span class="at">panel.grid.major =</span> <span class="fu">element_line</span>(<span class="at">colour =</span> <span class="st">&quot;grey70&quot;</span>, <span class="at">size =</span> <span class="fl">0.2</span>),</span>
-<span id="cb2-32"><a href="prison-addicts.html#cb2-32" aria-hidden="true" tabindex="-1"></a>    <span class="at">panel.grid.minor =</span> <span class="fu">element_blank</span>()</span>
-<span id="cb2-33"><a href="prison-addicts.html#cb2-33" aria-hidden="true" tabindex="-1"></a>  )</span></code></pre></div>
-<p><img src="_main_files/figure-html/unnamed-chunk-1-1.png" width="816" /></p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb2-1"><a href="prison-addicts.html#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Use the stratified Kaplan-Meier estimates to create a new table with the columns we need, namely:</span></span>
+<span id="cb2-2"><a href="prison-addicts.html#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="co">#    1. Prison status;</span></span>
+<span id="cb2-3"><a href="prison-addicts.html#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="co">#    2. Time-to-event for each person;</span></span>
+<span id="cb2-4"><a href="prison-addicts.html#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="co">#    3. Log cumulative hazard at each event time;</span></span>
+<span id="cb2-5"><a href="prison-addicts.html#cb2-5" aria-hidden="true" tabindex="-1"></a><span class="co">#    4. Confidence intervals to sexy-up the plot.</span></span>
+<span id="cb2-6"><a href="prison-addicts.html#cb2-6" aria-hidden="true" tabindex="-1"></a><span class="fu">tibble</span>(</span>
+<span id="cb2-7"><a href="prison-addicts.html#cb2-7" aria-hidden="true" tabindex="-1"></a>  <span class="at">prison =</span> <span class="fu">as.factor</span>(<span class="fu">rep</span>(<span class="fu">c</span>(<span class="dv">0</span>, <span class="dv">1</span>), <span class="at">times =</span> <span class="fu">c</span>(<span class="dv">112</span>, <span class="dv">99</span>))),</span>
+<span id="cb2-8"><a href="prison-addicts.html#cb2-8" aria-hidden="true" tabindex="-1"></a>  <span class="at">time   =</span> km.prison.strata<span class="sc">$</span>time,</span>
+<span id="cb2-9"><a href="prison-addicts.html#cb2-9" aria-hidden="true" tabindex="-1"></a>  <span class="at">log_cumhaz =</span> <span class="fu">log</span>(km.prison.strata<span class="sc">$</span>cumhaz),</span>
+<span id="cb2-10"><a href="prison-addicts.html#cb2-10" aria-hidden="true" tabindex="-1"></a>  <span class="at">conf_lower =</span> <span class="fu">log</span>(<span class="sc">-</span><span class="fu">log</span>(km.prison.strata<span class="sc">$</span>lower)),</span>
+<span id="cb2-11"><a href="prison-addicts.html#cb2-11" aria-hidden="true" tabindex="-1"></a>  <span class="at">conf_upper =</span> <span class="fu">log</span>(<span class="sc">-</span><span class="fu">log</span>(km.prison.strata<span class="sc">$</span>upper))</span>
+<span id="cb2-12"><a href="prison-addicts.html#cb2-12" aria-hidden="true" tabindex="-1"></a>) <span class="sc">%&gt;%</span> </span>
+<span id="cb2-13"><a href="prison-addicts.html#cb2-13" aria-hidden="true" tabindex="-1"></a>  </span>
+<span id="cb2-14"><a href="prison-addicts.html#cb2-14" aria-hidden="true" tabindex="-1"></a>  <span class="co"># Plot</span></span>
+<span id="cb2-15"><a href="prison-addicts.html#cb2-15" aria-hidden="true" tabindex="-1"></a>  <span class="fu">ggplot</span>(<span class="fu">aes</span>(<span class="at">x =</span> time, <span class="at">y =</span> log_cumhaz, <span class="at">colour =</span> prison, <span class="at">group =</span> prison, <span class="at">fill =</span> prison)) <span class="sc">+</span></span>
+<span id="cb2-16"><a href="prison-addicts.html#cb2-16" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_point</span>(<span class="at">shape =</span> <span class="dv">3</span>, <span class="at">size =</span> <span class="dv">2</span>) <span class="sc">+</span> </span>
+<span id="cb2-17"><a href="prison-addicts.html#cb2-17" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_line</span>(<span class="at">size =</span> <span class="dv">1</span>) <span class="sc">+</span></span>
+<span id="cb2-18"><a href="prison-addicts.html#cb2-18" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_ribbon</span>(<span class="fu">aes</span>(<span class="at">ymin =</span> conf_lower, <span class="at">ymax =</span> conf_upper), <span class="at">alpha=</span><span class="fl">0.3</span>, <span class="at">linetype =</span> <span class="dv">0</span>) <span class="sc">+</span></span>
+<span id="cb2-19"><a href="prison-addicts.html#cb2-19" aria-hidden="true" tabindex="-1"></a>  <span class="fu">scale_colour_manual</span>(<span class="at">values =</span> <span class="fu">c</span>(<span class="st">&quot;cadetblue4&quot;</span>,<span class="st">&quot;burlywood4&quot;</span>)) <span class="sc">+</span></span>
+<span id="cb2-20"><a href="prison-addicts.html#cb2-20" aria-hidden="true" tabindex="-1"></a>  <span class="fu">scale_fill_manual</span>(<span class="at">values =</span> <span class="fu">c</span>(<span class="st">&quot;cadetblue4&quot;</span>,<span class="st">&quot;burlywood4&quot;</span>)) <span class="sc">+</span></span>
+<span id="cb2-21"><a href="prison-addicts.html#cb2-21" aria-hidden="true" tabindex="-1"></a>  <span class="fu">theme_bw</span>() <span class="sc">+</span> </span>
+<span id="cb2-22"><a href="prison-addicts.html#cb2-22" aria-hidden="true" tabindex="-1"></a>  <span class="fu">theme</span>(</span>
+<span id="cb2-23"><a href="prison-addicts.html#cb2-23" aria-hidden="true" tabindex="-1"></a>    <span class="at">plot.title =</span> <span class="fu">element_text</span>(<span class="at">face =</span> <span class="st">&quot;bold&quot;</span>, <span class="at">size =</span> <span class="dv">12</span>),</span>
+<span id="cb2-24"><a href="prison-addicts.html#cb2-24" aria-hidden="true" tabindex="-1"></a>    <span class="at">legend.background =</span> <span class="fu">element_rect</span>(<span class="at">fill =</span> <span class="st">&quot;white&quot;</span>, <span class="at">size =</span> <span class="dv">4</span>, <span class="at">colour =</span> <span class="st">&quot;white&quot;</span>),</span>
+<span id="cb2-25"><a href="prison-addicts.html#cb2-25" aria-hidden="true" tabindex="-1"></a>    <span class="at">legend.justification =</span> <span class="fu">c</span>(<span class="dv">0</span>, <span class="dv">1</span>),</span>
+<span id="cb2-26"><a href="prison-addicts.html#cb2-26" aria-hidden="true" tabindex="-1"></a>    <span class="at">legend.position =</span> <span class="st">&quot;bottom&quot;</span>,</span>
+<span id="cb2-27"><a href="prison-addicts.html#cb2-27" aria-hidden="true" tabindex="-1"></a>    <span class="at">axis.ticks =</span> <span class="fu">element_line</span>(<span class="at">colour =</span> <span class="st">&quot;grey70&quot;</span>, <span class="at">size =</span> <span class="fl">0.2</span>),</span>
+<span id="cb2-28"><a href="prison-addicts.html#cb2-28" aria-hidden="true" tabindex="-1"></a>    <span class="at">panel.grid.major =</span> <span class="fu">element_line</span>(<span class="at">colour =</span> <span class="st">&quot;grey70&quot;</span>, <span class="at">size =</span> <span class="fl">0.2</span>),</span>
+<span id="cb2-29"><a href="prison-addicts.html#cb2-29" aria-hidden="true" tabindex="-1"></a>    <span class="at">panel.grid.minor =</span> <span class="fu">element_blank</span>()</span>
+<span id="cb2-30"><a href="prison-addicts.html#cb2-30" aria-hidden="true" tabindex="-1"></a>  )</span></code></pre></div>
+<p><img src="_main_files/figure-html/unnamed-chunk-2-1.png" width="816" /></p>
 <p>Based on this plot it looks like the log cumulative hazards are <em>sort of</em> proportional-<em>ish</em>. Things get a bit weird between days 70 and 150, and again after 600 days, but generally the prison group is above the non-prison group by a more-or-less consistent amount.</p>
 <p>I don’t feel super comfortable making a call about the validity of the proportional hazards assumption based on this plot alone. Another way of investigating the validity of the proportional hazards assumption for a particular predictor (and take the decision out of pure judgement-call territory) is to look at the Schoenfeld residuals of a cox regression with only prison as a predictor. Then we can look at the p-value of the Schoenfeld residuals and use that as a cutoff in the typical significance-testing way.</p>
 <div class="sourceCode" id="cb3"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb3-1"><a href="prison-addicts.html#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Fit a Cox regression</span></span>
@@ -400,37 +405,20 @@ dose
 <span id="cb3-7"><a href="prison-addicts.html#cb3-7" aria-hidden="true" tabindex="-1"></a><span class="co"># Plot the Schoenfeld residuals with Survminer</span></span>
 <span id="cb3-8"><a href="prison-addicts.html#cb3-8" aria-hidden="true" tabindex="-1"></a>survminer<span class="sc">::</span><span class="fu">ggcoxzph</span>(zph_object_cox_prison, <span class="at">point.col =</span> <span class="st">&quot;cadetblue4&quot;</span>)</span></code></pre></div>
 <p><img src="_main_files/figure-html/schoenfeld-prison-1.png" width="816" /></p>
-<p>This all suggests that the effect of being in prison might vary over time a bit, but the Schoenfeld p-value isn’t below .05, so I guess we are justified in not worrying about that. Our conclusion is that we can feel good about adopting the proportional hazards assumption for the <code>prison</code> variable.</p>
-<p>If instead we had found that prison varies a bunch over time then we <em>could</em> do a stratified regression by prison. But Singer and Willett point out that if we do this then we won’t get a parameter estimate for the influence of prison, and that’s a parameter estimate it would be nice to have. So instead we can relax the proportional hazards assumption by interacting prison with time. We’re not gonna do this now because our Schoenfeld residuals say we don’t have to but the authors of the <strong>Survival</strong> package <a href="https://cran.r-project.org/web/packages/survival/vignettes/timedep.pdf">have written some nice documentation about precisely how to do this</a>.</p>
-<p>Next let’s look at the real heart of the analysis: the treatment effect.</p>
-</div>
-<div id="how-does-time-to-event-vary-with-dosage" class="section level2 hasAnchor" number="1.3">
-<h2><span class="header-section-number">1.3</span> How does time-to-event vary with dosage?<a href="prison-addicts.html#how-does-time-to-event-vary-with-dosage" class="anchor-section" aria-label="Anchor link to header"></a></h2>
-<p>The treatment here is a continuous variable, making it tricky to visually assess the proportional hazards assumption with stratified log cumulative hazard curves. We still <em>could</em> do it via Singer and Willett’s general approach to visualization with continuous variables, IE choosing a few exemplary values of the continuous variables to plot, or as they call it, <em>“judicious categorization”</em>.</p>
-<p>So barring any background knowledge on which to base this assumption (I don’t even know what this experiment actually is), we’ll need to depend on our old friend the Schoenfeld residuals to assess the proportional hazards assumption:</p>
-<div class="sourceCode" id="cb4"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb4-1"><a href="prison-addicts.html#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Fit a Cox regression</span></span>
-<span id="cb4-2"><a href="prison-addicts.html#cb4-2" aria-hidden="true" tabindex="-1"></a>cox.dose.only <span class="ot">&lt;-</span> <span class="fu">coxph</span>(surv_object <span class="sc">~</span> <span class="dv">1</span> <span class="sc">+</span> dose, <span class="at">data =</span> dat)</span>
-<span id="cb4-3"><a href="prison-addicts.html#cb4-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb4-4"><a href="prison-addicts.html#cb4-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Get a zph object, which takes a Cox model object and returnslots of nice diagnostic information specifically about the proportional hazards assumption of that Cox model</span></span>
-<span id="cb4-5"><a href="prison-addicts.html#cb4-5" aria-hidden="true" tabindex="-1"></a>zph_object_cox_dose <span class="ot">&lt;-</span> <span class="fu">cox.zph</span>(cox.dose.only)</span>
-<span id="cb4-6"><a href="prison-addicts.html#cb4-6" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb4-7"><a href="prison-addicts.html#cb4-7" aria-hidden="true" tabindex="-1"></a><span class="co"># Plot the Schoenfeld residuals with Survminer</span></span>
-<span id="cb4-8"><a href="prison-addicts.html#cb4-8" aria-hidden="true" tabindex="-1"></a>survminer<span class="sc">::</span><span class="fu">ggcoxzph</span>(zph_object_cox_dose, <span class="at">point.col =</span> <span class="st">&quot;cadetblue4&quot;</span>)</span></code></pre></div>
-<p><img src="_main_files/figure-html/schoenfeld-dose-1.png" width="816" /></p>
-<p>Looks plenty flat to me, and a p-value far from .05. So we’re safe to assume that the proportional hazards model holds for the <code>Dose</code> variable.</p>
-<p>So let’s go ahead and fit a basic Cox model with <code>Dose</code> as the only predictor to get an estimate of the hazard ratio. Actually, we’ve already fit the model to get the Schoenfeld residuals above. So let’s have a look at the regression outputs.</p>
-<div class="sourceCode" id="cb5"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb5-1"><a href="prison-addicts.html#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Fit a Cox regression</span></span>
-<span id="cb5-2"><a href="prison-addicts.html#cb5-2" aria-hidden="true" tabindex="-1"></a>broom<span class="sc">::</span><span class="fu">tidy</span>(cox.dose.only, <span class="at">exponentiate =</span> <span class="cn">TRUE</span>) <span class="sc">%&gt;%</span></span>
-<span id="cb5-3"><a href="prison-addicts.html#cb5-3" aria-hidden="true" tabindex="-1"></a>  </span>
-<span id="cb5-4"><a href="prison-addicts.html#cb5-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">mutate</span>(<span class="at">p.value =</span> <span class="fu">as.character</span>(p.value)) <span class="sc">%&gt;%</span> </span>
-<span id="cb5-5"><a href="prison-addicts.html#cb5-5" aria-hidden="true" tabindex="-1"></a>  </span>
-<span id="cb5-6"><a href="prison-addicts.html#cb5-6" aria-hidden="true" tabindex="-1"></a>  janitor<span class="sc">::</span><span class="fu">clean_names</span>(<span class="st">&quot;title&quot;</span>) <span class="sc">%&gt;%</span> </span>
-<span id="cb5-7"><a href="prison-addicts.html#cb5-7" aria-hidden="true" tabindex="-1"></a>  </span>
-<span id="cb5-8"><a href="prison-addicts.html#cb5-8" aria-hidden="true" tabindex="-1"></a>  knitr<span class="sc">::</span><span class="fu">kable</span>(<span class="at">caption =</span> <span class="st">&quot;&quot;</span>) <span class="sc">%&gt;%</span> </span>
-<span id="cb5-9"><a href="prison-addicts.html#cb5-9" aria-hidden="true" tabindex="-1"></a>  kableExtra<span class="sc">::</span><span class="fu">kable_styling</span>(<span class="at">bootstrap_options =</span> <span class="st">&quot;striped&quot;</span>)</span></code></pre></div>
+<p>This all suggests that the effect of being in prison might vary over time a bit, but the Schoenfeld p-value isn’t below .05, so I guess we are justified in not worrying about that. Our conclusion is that we can feel good about adopting the proportional hazards assumption for the <code>prison</code> variable. So let’s fit a preliminary Cox model with <code>prison</code> as the only predictor, and see what the model thinks:</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb4-1"><a href="prison-addicts.html#cb4-1" aria-hidden="true" tabindex="-1"></a>broom<span class="sc">::</span><span class="fu">tidy</span>(cox.prison.only, <span class="at">exponentiate =</span> <span class="cn">TRUE</span>) <span class="sc">%&gt;%</span></span>
+<span id="cb4-2"><a href="prison-addicts.html#cb4-2" aria-hidden="true" tabindex="-1"></a>  </span>
+<span id="cb4-3"><a href="prison-addicts.html#cb4-3" aria-hidden="true" tabindex="-1"></a>  <span class="fu">mutate</span>(<span class="at">p.value =</span> <span class="fu">as.character</span>(p.value)) <span class="sc">%&gt;%</span> </span>
+<span id="cb4-4"><a href="prison-addicts.html#cb4-4" aria-hidden="true" tabindex="-1"></a>  </span>
+<span id="cb4-5"><a href="prison-addicts.html#cb4-5" aria-hidden="true" tabindex="-1"></a>  <span class="fu">select</span>(<span class="sc">-</span>statistic) <span class="sc">%&gt;%</span> </span>
+<span id="cb4-6"><a href="prison-addicts.html#cb4-6" aria-hidden="true" tabindex="-1"></a>  </span>
+<span id="cb4-7"><a href="prison-addicts.html#cb4-7" aria-hidden="true" tabindex="-1"></a>  janitor<span class="sc">::</span><span class="fu">clean_names</span>(<span class="st">&quot;title&quot;</span>) <span class="sc">%&gt;%</span> </span>
+<span id="cb4-8"><a href="prison-addicts.html#cb4-8" aria-hidden="true" tabindex="-1"></a>  </span>
+<span id="cb4-9"><a href="prison-addicts.html#cb4-9" aria-hidden="true" tabindex="-1"></a>  knitr<span class="sc">::</span><span class="fu">kable</span>(<span class="at">caption =</span> <span class="st">&quot;&quot;</span>) <span class="sc">%&gt;%</span> </span>
+<span id="cb4-10"><a href="prison-addicts.html#cb4-10" aria-hidden="true" tabindex="-1"></a>  kableExtra<span class="sc">::</span><span class="fu">kable_styling</span>(<span class="at">bootstrap_options =</span> <span class="st">&quot;striped&quot;</span>)</span></code></pre></div>
 <table class="table table-striped" style="margin-left: auto; margin-right: auto;">
 <caption>
-<span id="tab:unnamed-chunk-2">Table 1.2: </span>
+<span id="tab:unnamed-chunk-3">Table 1.2: </span>
 </caption>
 <thead>
 <tr>
@@ -443,8 +431,72 @@ Estimate
 <th style="text-align:right;">
 Std Error
 </th>
+<th style="text-align:left;">
+P Value
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:left;">
+prison
+</td>
+<td style="text-align:right;">
+1.201821
+</td>
+<td style="text-align:right;">
+0.1642334
+</td>
+<td style="text-align:left;">
+0.262982308757287
+</td>
+</tr>
+</tbody>
+</table>
+<p>The model thinks that being in prison increases your Hazard by about 20% in relative terms at any given point in time. But it has a pretty wide standard error, with an estimate of 1 (no effect) falling just over one standard error from the estimate. Hence the non-significant p-value.</p>
+<p>If instead we had found that prison varies a bunch over time then we <em>could</em> do a stratified regression by prison. But Singer and Willett point out that if we do this then we won’t get a parameter estimate for the influence of prison, and that’s a parameter estimate it would be nice to have. So instead we can relax the proportional hazards assumption by interacting prison with time. We’re not gonna do this now because our Schoenfeld residuals say we don’t have to but the authors of the <strong>Survival</strong> package <a href="https://cran.r-project.org/web/packages/survival/vignettes/timedep.pdf">have written some nice documentation about precisely how to do this</a>.</p>
+<p>Next let’s look at the real heart of the analysis: the treatment effect.</p>
+</div>
+<div id="how-does-time-to-event-vary-with-dosage" class="section level2 hasAnchor" number="1.3">
+<h2><span class="header-section-number">1.3</span> How does time-to-event vary with dosage?<a href="prison-addicts.html#how-does-time-to-event-vary-with-dosage" class="anchor-section" aria-label="Anchor link to header"></a></h2>
+<p>The treatment here is a continuous variable, making it tricky to visually assess the proportional hazards assumption with stratified log cumulative hazard curves. We still <em>could</em> do it via Singer and Willett’s general approach to visualization with continuous variables, IE choosing a few exemplary values of the continuous variables to plot, or as they call it, <em>“judicious categorization”</em>.</p>
+<p>So barring any background knowledge on which to base this assumption (I don’t even know what this experiment actually is), we’ll need to depend on our old friend the Schoenfeld residuals to assess the proportional hazards assumption:</p>
+<div class="sourceCode" id="cb5"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb5-1"><a href="prison-addicts.html#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Fit a Cox regression</span></span>
+<span id="cb5-2"><a href="prison-addicts.html#cb5-2" aria-hidden="true" tabindex="-1"></a>cox.dose.only <span class="ot">&lt;-</span> <span class="fu">coxph</span>(surv_object <span class="sc">~</span> <span class="dv">1</span> <span class="sc">+</span> dose, <span class="at">data =</span> dat)</span>
+<span id="cb5-3"><a href="prison-addicts.html#cb5-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-4"><a href="prison-addicts.html#cb5-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Get a zph object, which takes a Cox model object and returnslots of nice diagnostic information specifically about the proportional hazards assumption of that Cox model</span></span>
+<span id="cb5-5"><a href="prison-addicts.html#cb5-5" aria-hidden="true" tabindex="-1"></a>zph_object_cox_dose <span class="ot">&lt;-</span> <span class="fu">cox.zph</span>(cox.dose.only)</span>
+<span id="cb5-6"><a href="prison-addicts.html#cb5-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-7"><a href="prison-addicts.html#cb5-7" aria-hidden="true" tabindex="-1"></a><span class="co"># Plot the Schoenfeld residuals with Survminer</span></span>
+<span id="cb5-8"><a href="prison-addicts.html#cb5-8" aria-hidden="true" tabindex="-1"></a>survminer<span class="sc">::</span><span class="fu">ggcoxzph</span>(zph_object_cox_dose, <span class="at">point.col =</span> <span class="st">&quot;cadetblue4&quot;</span>)</span></code></pre></div>
+<p><img src="_main_files/figure-html/schoenfeld-dose-1.png" width="816" /></p>
+<p>Looks plenty flat to me, and a p-value far from .05. So we’re safe to assume that the proportional hazards model holds for the <code>Dose</code> variable.</p>
+<p>So let’s go ahead and fit a basic Cox model with <code>Dose</code> as the only predictor to get an estimate of the hazard ratio. Actually, we’ve already fit the model to get the Schoenfeld residuals above. So let’s have a look at the regression outputs.</p>
+<div class="sourceCode" id="cb6"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb6-1"><a href="prison-addicts.html#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Fit a Cox regression</span></span>
+<span id="cb6-2"><a href="prison-addicts.html#cb6-2" aria-hidden="true" tabindex="-1"></a>broom<span class="sc">::</span><span class="fu">tidy</span>(cox.dose.only, <span class="at">exponentiate =</span> <span class="cn">TRUE</span>) <span class="sc">%&gt;%</span></span>
+<span id="cb6-3"><a href="prison-addicts.html#cb6-3" aria-hidden="true" tabindex="-1"></a>  </span>
+<span id="cb6-4"><a href="prison-addicts.html#cb6-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">mutate</span>(<span class="at">p.value =</span> <span class="fu">as.character</span>(p.value)) <span class="sc">%&gt;%</span> </span>
+<span id="cb6-5"><a href="prison-addicts.html#cb6-5" aria-hidden="true" tabindex="-1"></a>  </span>
+<span id="cb6-6"><a href="prison-addicts.html#cb6-6" aria-hidden="true" tabindex="-1"></a>  <span class="fu">select</span>(<span class="sc">-</span>statistic) <span class="sc">%&gt;%</span> </span>
+<span id="cb6-7"><a href="prison-addicts.html#cb6-7" aria-hidden="true" tabindex="-1"></a>  </span>
+<span id="cb6-8"><a href="prison-addicts.html#cb6-8" aria-hidden="true" tabindex="-1"></a>  janitor<span class="sc">::</span><span class="fu">clean_names</span>(<span class="st">&quot;title&quot;</span>) <span class="sc">%&gt;%</span> </span>
+<span id="cb6-9"><a href="prison-addicts.html#cb6-9" aria-hidden="true" tabindex="-1"></a>  </span>
+<span id="cb6-10"><a href="prison-addicts.html#cb6-10" aria-hidden="true" tabindex="-1"></a>  knitr<span class="sc">::</span><span class="fu">kable</span>(<span class="at">caption =</span> <span class="st">&quot;&quot;</span>) <span class="sc">%&gt;%</span> </span>
+<span id="cb6-11"><a href="prison-addicts.html#cb6-11" aria-hidden="true" tabindex="-1"></a>  kableExtra<span class="sc">::</span><span class="fu">kable_styling</span>(<span class="at">bootstrap_options =</span> <span class="st">&quot;striped&quot;</span>)</span></code></pre></div>
+<table class="table table-striped" style="margin-left: auto; margin-right: auto;">
+<caption>
+<span id="tab:unnamed-chunk-4">Table 1.3: </span>
+</caption>
+<thead>
+<tr>
+<th style="text-align:left;">
+Term
+</th>
 <th style="text-align:right;">
-Statistic
+Estimate
+</th>
+<th style="text-align:right;">
+Std Error
 </th>
 <th style="text-align:left;">
 P Value
@@ -462,9 +514,6 @@ dose
 <td style="text-align:right;">
 0.0059768
 </td>
-<td style="text-align:right;">
--6.006972
-</td>
 <td style="text-align:left;">
 1.89020241735986e-09
 </td>
@@ -472,35 +521,799 @@ dose
 </tbody>
 </table>
 <p>Based on the estimated hazard ratio, the model thinks that each additional unit of dosage reduces hazard by about 3.5% in relative terms. So the model expects that if a person with a dosage of 0 has 50% hazard, then a person with a dosage of 1 will have a hazard of about (.50 * .965) ~ 48%, a person with a dosage of 10 will have a hazard of about (.50 * .965<sup>10</sup>) ~ 35%, and a person with a dosage of 100 will have a hazard of about (.50 * .965<sup>100</sup>) ~ 1.4%. This is what the model thinks.</p>
-<p>Also wow, that is a very tiny p-value, which suggests that given the size and variance of the sample, the model’s estimate of the treatment effect does not seem compatible with a <em>true</em> effect of 0, b In other words, if we assume that our sample of people is a perfect representation of some infinitely large group of people, then the model things that if we did this same experiment over and over and over infinitely many times, each time drawing a different random group of people from that infinite group of people of the same size as the experiment we actually did, then we would only see the effect we saw (or a bigger one) like 2 of every billion experiments. This is a pretty weird thing to say, but this is how p-values work.</p>
-<p>So the model thinks the effect is of the treatment is big, with higher dosage reducing hazard. Another nice way of visualizing the treatment effect is to choose some theoretically interesting values of dosage and generate the model’s survival curves for them. The way to do this is to… EXPLAIN</p>
-<div class="sourceCode" id="cb6"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb6-1"><a href="prison-addicts.html#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Create fake data with the desired values of dosage</span></span>
-<span id="cb6-2"><a href="prison-addicts.html#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="fu">bind_rows</span>(</span>
-<span id="cb6-3"><a href="prison-addicts.html#cb6-3" aria-hidden="true" tabindex="-1"></a>  survminer<span class="sc">::</span><span class="fu">surv_adjustedcurves</span>(cox.dose.only, <span class="at">data =</span> <span class="fu">tibble</span>(<span class="at">dose =</span> <span class="dv">0</span>)) <span class="sc">%&gt;%</span> <span class="fu">mutate</span>(<span class="at">dosage =</span> <span class="st">&quot;Dose = 0&quot;</span>),</span>
-<span id="cb6-4"><a href="prison-addicts.html#cb6-4" aria-hidden="true" tabindex="-1"></a>  survminer<span class="sc">::</span><span class="fu">surv_adjustedcurves</span>(cox.dose.only, <span class="at">data =</span> <span class="fu">tibble</span>(<span class="at">dose =</span> <span class="dv">20</span>)) <span class="sc">%&gt;%</span> <span class="fu">mutate</span>(<span class="at">dosage =</span> <span class="st">&quot;Dose = 20&quot;</span>),</span>
-<span id="cb6-5"><a href="prison-addicts.html#cb6-5" aria-hidden="true" tabindex="-1"></a>  survminer<span class="sc">::</span><span class="fu">surv_adjustedcurves</span>(cox.dose.only, <span class="at">data =</span> <span class="fu">tibble</span>(<span class="at">dose =</span> <span class="dv">40</span>)) <span class="sc">%&gt;%</span> <span class="fu">mutate</span>(<span class="at">dosage =</span> <span class="st">&quot;Dose = 40&quot;</span>),</span>
-<span id="cb6-6"><a href="prison-addicts.html#cb6-6" aria-hidden="true" tabindex="-1"></a>  survminer<span class="sc">::</span><span class="fu">surv_adjustedcurves</span>(cox.dose.only, <span class="at">data =</span> <span class="fu">tibble</span>(<span class="at">dose =</span> <span class="dv">60</span>)) <span class="sc">%&gt;%</span> <span class="fu">mutate</span>(<span class="at">dosage =</span> <span class="st">&quot;Dose = 60&quot;</span>),</span>
-<span id="cb6-7"><a href="prison-addicts.html#cb6-7" aria-hidden="true" tabindex="-1"></a>  survminer<span class="sc">::</span><span class="fu">surv_adjustedcurves</span>(cox.dose.only, <span class="at">data =</span> <span class="fu">tibble</span>(<span class="at">dose =</span> <span class="dv">80</span>)) <span class="sc">%&gt;%</span> <span class="fu">mutate</span>(<span class="at">dosage =</span> <span class="st">&quot;Dose = 80&quot;</span>)</span>
-<span id="cb6-8"><a href="prison-addicts.html#cb6-8" aria-hidden="true" tabindex="-1"></a>) <span class="sc">%&gt;%</span> </span>
-<span id="cb6-9"><a href="prison-addicts.html#cb6-9" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-10"><a href="prison-addicts.html#cb6-10" aria-hidden="true" tabindex="-1"></a><span class="co"># Plot</span></span>
-<span id="cb6-11"><a href="prison-addicts.html#cb6-11" aria-hidden="true" tabindex="-1"></a>  <span class="fu">ggplot</span>(<span class="fu">aes</span>(<span class="at">x =</span> time, <span class="at">y =</span> surv, <span class="at">group =</span> dosage, <span class="at">colour =</span> dosage)) <span class="sc">+</span></span>
-<span id="cb6-12"><a href="prison-addicts.html#cb6-12" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_point</span>(<span class="at">shape =</span> <span class="dv">3</span>, <span class="at">size =</span> <span class="dv">2</span>) <span class="sc">+</span> </span>
-<span id="cb6-13"><a href="prison-addicts.html#cb6-13" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_line</span>(<span class="at">size =</span> <span class="dv">1</span>) <span class="sc">+</span></span>
-<span id="cb6-14"><a href="prison-addicts.html#cb6-14" aria-hidden="true" tabindex="-1"></a>  <span class="fu">scale_colour_manual</span>(<span class="at">values=</span><span class="fu">c</span>(<span class="st">&quot;burlywood4&quot;</span>, <span class="st">&quot;deepskyblue4&quot;</span>, <span class="st">&quot;aquamarine4&quot;</span>, <span class="st">&quot;cadetblue4&quot;</span>, <span class="st">&quot;antiquewhite4&quot;</span>)) <span class="sc">+</span></span>
-<span id="cb6-15"><a href="prison-addicts.html#cb6-15" aria-hidden="true" tabindex="-1"></a>  <span class="fu">theme_bw</span>() <span class="sc">+</span> </span>
-<span id="cb6-16"><a href="prison-addicts.html#cb6-16" aria-hidden="true" tabindex="-1"></a>  <span class="fu">theme</span>(</span>
-<span id="cb6-17"><a href="prison-addicts.html#cb6-17" aria-hidden="true" tabindex="-1"></a>    <span class="at">plot.title =</span> <span class="fu">element_text</span>(<span class="at">face =</span> <span class="st">&quot;bold&quot;</span>, <span class="at">size =</span> <span class="dv">12</span>),</span>
-<span id="cb6-18"><a href="prison-addicts.html#cb6-18" aria-hidden="true" tabindex="-1"></a>    <span class="at">legend.background =</span> <span class="fu">element_rect</span>(<span class="at">fill =</span> <span class="st">&quot;white&quot;</span>, <span class="at">size =</span> <span class="dv">4</span>, <span class="at">colour =</span> <span class="st">&quot;white&quot;</span>),</span>
-<span id="cb6-19"><a href="prison-addicts.html#cb6-19" aria-hidden="true" tabindex="-1"></a>    <span class="at">legend.justification =</span> <span class="fu">c</span>(<span class="dv">0</span>, <span class="dv">1</span>),</span>
-<span id="cb6-20"><a href="prison-addicts.html#cb6-20" aria-hidden="true" tabindex="-1"></a>    <span class="at">legend.position =</span> <span class="st">&quot;bottom&quot;</span>,</span>
-<span id="cb6-21"><a href="prison-addicts.html#cb6-21" aria-hidden="true" tabindex="-1"></a>    <span class="at">axis.ticks =</span> <span class="fu">element_line</span>(<span class="at">colour =</span> <span class="st">&quot;grey70&quot;</span>, <span class="at">size =</span> <span class="fl">0.2</span>),</span>
-<span id="cb6-22"><a href="prison-addicts.html#cb6-22" aria-hidden="true" tabindex="-1"></a>    <span class="at">panel.grid.major =</span> <span class="fu">element_line</span>(<span class="at">colour =</span> <span class="st">&quot;grey70&quot;</span>, <span class="at">size =</span> <span class="fl">0.2</span>),</span>
-<span id="cb6-23"><a href="prison-addicts.html#cb6-23" aria-hidden="true" tabindex="-1"></a>    <span class="at">panel.grid.minor =</span> <span class="fu">element_blank</span>(),</span>
-<span id="cb6-24"><a href="prison-addicts.html#cb6-24" aria-hidden="true" tabindex="-1"></a>    <span class="at">legend.title =</span> <span class="fu">element_blank</span>()</span>
-<span id="cb6-25"><a href="prison-addicts.html#cb6-25" aria-hidden="true" tabindex="-1"></a>  )</span></code></pre></div>
+<p>Also wow, that is a very tiny p-value, which suggests that given the size and variance of the sample, the model’s estimate of the treatment effect does not seem compatible with a <em>true</em> effect of 0. In other words, if we assume that our sample of people is a perfect representation of some infinitely large group of people, then the model thinks that if we did this same experiment over and over and over infinitely many times, each time drawing a different random group of people from that infinite group of people of the same size as the experiment we actually did, then we would only see the effect we saw (or a bigger one) like 2 of every billion experiments. This is a pretty weird thing to say, but this is how p-values work.</p>
+<p>So the model thinks the effect is of the treatment is big, with higher dosage reducing hazard. Another nice way of visualizing the treatment effect is to choose some theoretically interesting values of dosage and generate the model’s predicted survival curves for them. Since the model’s only predictor is <code>dose</code>, we can simulate some fake data with the dosage amount’s we’re curious about, and then use the <strong>survminer</strong> package’s <code>surv_adjustedcurves</code> function to plot the ‘recovered’ survival curves for them. (I’m not super clear on the most-used approaches for deriving these ‘recovered’ curves. Singer and Willett talk about the method where you replicate the process of getting your Kaplan-Meier calculations, but using the Cox-model-based risk scores in the risk set to determine the probabilities in each period rather than merely the size of the risk set. Not sure if this is what is happening here, but the <code>surv_adjustedcurves</code> documentation gets into it.)</p>
+<div class="sourceCode" id="cb7"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb7-1"><a href="prison-addicts.html#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Create fake data with the desired values of dosage</span></span>
+<span id="cb7-2"><a href="prison-addicts.html#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="fu">bind_rows</span>(</span>
+<span id="cb7-3"><a href="prison-addicts.html#cb7-3" aria-hidden="true" tabindex="-1"></a>  survminer<span class="sc">::</span><span class="fu">surv_adjustedcurves</span>(cox.dose.only, <span class="at">data =</span> <span class="fu">tibble</span>(<span class="at">dose =</span> <span class="dv">0</span>)) <span class="sc">%&gt;%</span> <span class="fu">mutate</span>(<span class="at">dosage =</span> <span class="st">&quot;Dose = 0&quot;</span>),</span>
+<span id="cb7-4"><a href="prison-addicts.html#cb7-4" aria-hidden="true" tabindex="-1"></a>  survminer<span class="sc">::</span><span class="fu">surv_adjustedcurves</span>(cox.dose.only, <span class="at">data =</span> <span class="fu">tibble</span>(<span class="at">dose =</span> <span class="dv">20</span>)) <span class="sc">%&gt;%</span> <span class="fu">mutate</span>(<span class="at">dosage =</span> <span class="st">&quot;Dose = 20&quot;</span>),</span>
+<span id="cb7-5"><a href="prison-addicts.html#cb7-5" aria-hidden="true" tabindex="-1"></a>  survminer<span class="sc">::</span><span class="fu">surv_adjustedcurves</span>(cox.dose.only, <span class="at">data =</span> <span class="fu">tibble</span>(<span class="at">dose =</span> <span class="dv">40</span>)) <span class="sc">%&gt;%</span> <span class="fu">mutate</span>(<span class="at">dosage =</span> <span class="st">&quot;Dose = 40&quot;</span>),</span>
+<span id="cb7-6"><a href="prison-addicts.html#cb7-6" aria-hidden="true" tabindex="-1"></a>  survminer<span class="sc">::</span><span class="fu">surv_adjustedcurves</span>(cox.dose.only, <span class="at">data =</span> <span class="fu">tibble</span>(<span class="at">dose =</span> <span class="dv">60</span>)) <span class="sc">%&gt;%</span> <span class="fu">mutate</span>(<span class="at">dosage =</span> <span class="st">&quot;Dose = 60&quot;</span>),</span>
+<span id="cb7-7"><a href="prison-addicts.html#cb7-7" aria-hidden="true" tabindex="-1"></a>  survminer<span class="sc">::</span><span class="fu">surv_adjustedcurves</span>(cox.dose.only, <span class="at">data =</span> <span class="fu">tibble</span>(<span class="at">dose =</span> <span class="dv">80</span>)) <span class="sc">%&gt;%</span> <span class="fu">mutate</span>(<span class="at">dosage =</span> <span class="st">&quot;Dose = 80&quot;</span>)</span>
+<span id="cb7-8"><a href="prison-addicts.html#cb7-8" aria-hidden="true" tabindex="-1"></a>) <span class="sc">%&gt;%</span> </span>
+<span id="cb7-9"><a href="prison-addicts.html#cb7-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-10"><a href="prison-addicts.html#cb7-10" aria-hidden="true" tabindex="-1"></a><span class="co"># Plot</span></span>
+<span id="cb7-11"><a href="prison-addicts.html#cb7-11" aria-hidden="true" tabindex="-1"></a>  <span class="fu">ggplot</span>(<span class="fu">aes</span>(<span class="at">x =</span> time, <span class="at">y =</span> surv, <span class="at">group =</span> dosage, <span class="at">colour =</span> dosage)) <span class="sc">+</span></span>
+<span id="cb7-12"><a href="prison-addicts.html#cb7-12" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_point</span>(<span class="at">shape =</span> <span class="dv">3</span>, <span class="at">size =</span> <span class="dv">2</span>) <span class="sc">+</span> </span>
+<span id="cb7-13"><a href="prison-addicts.html#cb7-13" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_line</span>(<span class="at">size =</span> <span class="dv">1</span>) <span class="sc">+</span></span>
+<span id="cb7-14"><a href="prison-addicts.html#cb7-14" aria-hidden="true" tabindex="-1"></a>  <span class="fu">scale_colour_manual</span>(<span class="at">values=</span><span class="fu">c</span>(<span class="st">&quot;burlywood4&quot;</span>, <span class="st">&quot;deepskyblue4&quot;</span>, <span class="st">&quot;aquamarine4&quot;</span>, <span class="st">&quot;cadetblue4&quot;</span>, <span class="st">&quot;antiquewhite4&quot;</span>)) <span class="sc">+</span></span>
+<span id="cb7-15"><a href="prison-addicts.html#cb7-15" aria-hidden="true" tabindex="-1"></a>  <span class="fu">theme_bw</span>() <span class="sc">+</span> </span>
+<span id="cb7-16"><a href="prison-addicts.html#cb7-16" aria-hidden="true" tabindex="-1"></a>  <span class="fu">theme</span>(</span>
+<span id="cb7-17"><a href="prison-addicts.html#cb7-17" aria-hidden="true" tabindex="-1"></a>    <span class="at">plot.title =</span> <span class="fu">element_text</span>(<span class="at">face =</span> <span class="st">&quot;bold&quot;</span>, <span class="at">size =</span> <span class="dv">12</span>),</span>
+<span id="cb7-18"><a href="prison-addicts.html#cb7-18" aria-hidden="true" tabindex="-1"></a>    <span class="at">legend.background =</span> <span class="fu">element_rect</span>(<span class="at">fill =</span> <span class="st">&quot;white&quot;</span>, <span class="at">size =</span> <span class="dv">4</span>, <span class="at">colour =</span> <span class="st">&quot;white&quot;</span>),</span>
+<span id="cb7-19"><a href="prison-addicts.html#cb7-19" aria-hidden="true" tabindex="-1"></a>    <span class="at">legend.justification =</span> <span class="fu">c</span>(<span class="dv">0</span>, <span class="dv">1</span>),</span>
+<span id="cb7-20"><a href="prison-addicts.html#cb7-20" aria-hidden="true" tabindex="-1"></a>    <span class="at">legend.position =</span> <span class="st">&quot;bottom&quot;</span>,</span>
+<span id="cb7-21"><a href="prison-addicts.html#cb7-21" aria-hidden="true" tabindex="-1"></a>    <span class="at">axis.ticks =</span> <span class="fu">element_line</span>(<span class="at">colour =</span> <span class="st">&quot;grey70&quot;</span>, <span class="at">size =</span> <span class="fl">0.2</span>),</span>
+<span id="cb7-22"><a href="prison-addicts.html#cb7-22" aria-hidden="true" tabindex="-1"></a>    <span class="at">panel.grid.major =</span> <span class="fu">element_line</span>(<span class="at">colour =</span> <span class="st">&quot;grey70&quot;</span>, <span class="at">size =</span> <span class="fl">0.2</span>),</span>
+<span id="cb7-23"><a href="prison-addicts.html#cb7-23" aria-hidden="true" tabindex="-1"></a>    <span class="at">panel.grid.minor =</span> <span class="fu">element_blank</span>(),</span>
+<span id="cb7-24"><a href="prison-addicts.html#cb7-24" aria-hidden="true" tabindex="-1"></a>    <span class="at">legend.title =</span> <span class="fu">element_blank</span>()</span>
+<span id="cb7-25"><a href="prison-addicts.html#cb7-25" aria-hidden="true" tabindex="-1"></a>  )</span></code></pre></div>
 <p><img src="_main_files/figure-html/different-doses-1.png" width="816" /></p>
-<p>Could be nice to do some martingale residuals of prison status against the dosage only model, to see if prison status is worth including despite not being a juicy p-value.</p>
+<p>This squid-like plot illustrates the degree to which the model thinks dosage matters in shaping event times.</p>
+<p>So the effect of dosage is powerful. And in the previous section we also saw that prison status seems to be correlated with time-to-event. So let’s try a model where we include <code>dose</code> and <code>prison</code> together in the model and see if the effects are any different than in the models where each is the sole predictor:</p>
+<div class="sourceCode" id="cb8"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb8-1"><a href="prison-addicts.html#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Fit the model with the two predictors together</span></span>
+<span id="cb8-2"><a href="prison-addicts.html#cb8-2" aria-hidden="true" tabindex="-1"></a>cox.prison.dose <span class="ot">&lt;-</span> <span class="fu">coxph</span>(surv_object <span class="sc">~</span> <span class="dv">1</span> <span class="sc">+</span> dose <span class="sc">+</span> prison, <span class="at">data =</span> dat)</span>
+<span id="cb8-3"><a href="prison-addicts.html#cb8-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb8-4"><a href="prison-addicts.html#cb8-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Clean the model outputs for visualization</span></span>
+<span id="cb8-5"><a href="prison-addicts.html#cb8-5" aria-hidden="true" tabindex="-1"></a><span class="fu">list</span>(</span>
+<span id="cb8-6"><a href="prison-addicts.html#cb8-6" aria-hidden="true" tabindex="-1"></a>  cox.prison.only,</span>
+<span id="cb8-7"><a href="prison-addicts.html#cb8-7" aria-hidden="true" tabindex="-1"></a>  cox.dose.only,</span>
+<span id="cb8-8"><a href="prison-addicts.html#cb8-8" aria-hidden="true" tabindex="-1"></a>  cox.prison.dose</span>
+<span id="cb8-9"><a href="prison-addicts.html#cb8-9" aria-hidden="true" tabindex="-1"></a>) <span class="sc">%&gt;%</span> </span>
+<span id="cb8-10"><a href="prison-addicts.html#cb8-10" aria-hidden="true" tabindex="-1"></a>  </span>
+<span id="cb8-11"><a href="prison-addicts.html#cb8-11" aria-hidden="true" tabindex="-1"></a>  <span class="fu">map</span>(broom<span class="sc">::</span>tidy, <span class="at">exponentiate =</span> <span class="cn">TRUE</span>, <span class="at">conf.int =</span> <span class="cn">TRUE</span>) <span class="sc">%&gt;%</span> </span>
+<span id="cb8-12"><a href="prison-addicts.html#cb8-12" aria-hidden="true" tabindex="-1"></a>  </span>
+<span id="cb8-13"><a href="prison-addicts.html#cb8-13" aria-hidden="true" tabindex="-1"></a>  <span class="fu">map</span>(<span class="sc">~</span> <span class="fu">mutate</span>(., <span class="at">model =</span> <span class="fu">toString</span>(term))) <span class="sc">%&gt;%</span></span>
+<span id="cb8-14"><a href="prison-addicts.html#cb8-14" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb8-15"><a href="prison-addicts.html#cb8-15" aria-hidden="true" tabindex="-1"></a>  <span class="fu">bind_rows</span>() <span class="sc">%&gt;%</span> </span>
+<span id="cb8-16"><a href="prison-addicts.html#cb8-16" aria-hidden="true" tabindex="-1"></a>  </span>
+<span id="cb8-17"><a href="prison-addicts.html#cb8-17" aria-hidden="true" tabindex="-1"></a>  <span class="co"># Could compress into one line but I find it clearer to have multiple steps</span></span>
+<span id="cb8-18"><a href="prison-addicts.html#cb8-18" aria-hidden="true" tabindex="-1"></a>  <span class="fu">mutate</span>(</span>
+<span id="cb8-19"><a href="prison-addicts.html#cb8-19" aria-hidden="true" tabindex="-1"></a>    <span class="at">model =</span> <span class="fu">str_replace_all</span>(model, <span class="st">&quot;, &quot;</span>, <span class="st">&quot; + &quot;</span>),</span>
+<span id="cb8-20"><a href="prison-addicts.html#cb8-20" aria-hidden="true" tabindex="-1"></a>    <span class="at">model =</span> <span class="fu">ifelse</span>(<span class="sc">!</span><span class="fu">str_detect</span>(model, <span class="st">&quot;</span><span class="sc">\\</span><span class="st">+&quot;</span>), <span class="fu">paste</span>(model, <span class="st">&quot;only&quot;</span>), model),</span>
+<span id="cb8-21"><a href="prison-addicts.html#cb8-21" aria-hidden="true" tabindex="-1"></a>    <span class="at">model =</span> <span class="fu">str_to_sentence</span>(model)</span>
+<span id="cb8-22"><a href="prison-addicts.html#cb8-22" aria-hidden="true" tabindex="-1"></a>  ) <span class="sc">%&gt;%</span> </span>
+<span id="cb8-23"><a href="prison-addicts.html#cb8-23" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb8-24"><a href="prison-addicts.html#cb8-24" aria-hidden="true" tabindex="-1"></a>  <span class="co"># Plot</span></span>
+<span id="cb8-25"><a href="prison-addicts.html#cb8-25" aria-hidden="true" tabindex="-1"></a>  <span class="fu">ggplot</span>(<span class="fu">aes</span>(<span class="at">x =</span> term, <span class="at">y=</span>estimate, <span class="at">ymin=</span>conf.low, <span class="at">ymax=</span>conf.high, <span class="at">colour =</span> model)) <span class="sc">+</span></span>
+<span id="cb8-26"><a href="prison-addicts.html#cb8-26" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_pointrange</span>(<span class="at">position =</span> <span class="fu">position_dodge</span>(<span class="at">width =</span> .<span class="dv">2</span>)) <span class="sc">+</span></span>
+<span id="cb8-27"><a href="prison-addicts.html#cb8-27" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_hline</span>(<span class="at">yintercept=</span><span class="dv">1</span>, <span class="at">lty=</span><span class="dv">2</span>) <span class="sc">+</span>  </span>
+<span id="cb8-28"><a href="prison-addicts.html#cb8-28" aria-hidden="true" tabindex="-1"></a>  <span class="fu">coord_flip</span>() <span class="sc">+</span>  </span>
+<span id="cb8-29"><a href="prison-addicts.html#cb8-29" aria-hidden="true" tabindex="-1"></a>  <span class="fu">xlab</span>(<span class="st">&quot;Predictor&quot;</span>) <span class="sc">+</span> </span>
+<span id="cb8-30"><a href="prison-addicts.html#cb8-30" aria-hidden="true" tabindex="-1"></a>  <span class="fu">ylab</span>(<span class="st">&quot;Hazard Ratio (95% CI)&quot;</span>) <span class="sc">+</span></span>
+<span id="cb8-31"><a href="prison-addicts.html#cb8-31" aria-hidden="true" tabindex="-1"></a>  <span class="fu">scale_colour_manual</span>(<span class="at">values=</span><span class="fu">c</span>(<span class="st">&quot;deepskyblue4&quot;</span>, <span class="st">&quot;springgreen4&quot;</span>, <span class="st">&quot;burlywood4&quot;</span>)) <span class="sc">+</span></span>
+<span id="cb8-32"><a href="prison-addicts.html#cb8-32" aria-hidden="true" tabindex="-1"></a>  <span class="fu">theme_bw</span>() <span class="sc">+</span></span>
+<span id="cb8-33"><a href="prison-addicts.html#cb8-33" aria-hidden="true" tabindex="-1"></a>  <span class="fu">theme</span>(</span>
+<span id="cb8-34"><a href="prison-addicts.html#cb8-34" aria-hidden="true" tabindex="-1"></a>    <span class="at">plot.title =</span> <span class="fu">element_text</span>(<span class="at">face =</span> <span class="st">&quot;bold&quot;</span>, <span class="at">size =</span> <span class="dv">12</span>),</span>
+<span id="cb8-35"><a href="prison-addicts.html#cb8-35" aria-hidden="true" tabindex="-1"></a>    <span class="at">legend.background =</span> <span class="fu">element_rect</span>(<span class="at">fill =</span> <span class="st">&quot;white&quot;</span>, <span class="at">size =</span> <span class="dv">4</span>, <span class="at">colour =</span> <span class="st">&quot;white&quot;</span>),</span>
+<span id="cb8-36"><a href="prison-addicts.html#cb8-36" aria-hidden="true" tabindex="-1"></a>    <span class="at">legend.justification =</span> <span class="fu">c</span>(<span class="dv">0</span>, <span class="dv">1</span>),</span>
+<span id="cb8-37"><a href="prison-addicts.html#cb8-37" aria-hidden="true" tabindex="-1"></a>    <span class="at">legend.position =</span> <span class="st">&quot;bottom&quot;</span>,</span>
+<span id="cb8-38"><a href="prison-addicts.html#cb8-38" aria-hidden="true" tabindex="-1"></a>    <span class="at">axis.ticks =</span> <span class="fu">element_line</span>(<span class="at">colour =</span> <span class="st">&quot;grey70&quot;</span>, <span class="at">size =</span> <span class="fl">0.2</span>),</span>
+<span id="cb8-39"><a href="prison-addicts.html#cb8-39" aria-hidden="true" tabindex="-1"></a>    <span class="at">panel.grid.major =</span> <span class="fu">element_line</span>(<span class="at">colour =</span> <span class="st">&quot;grey70&quot;</span>, <span class="at">size =</span> <span class="fl">0.2</span>),</span>
+<span id="cb8-40"><a href="prison-addicts.html#cb8-40" aria-hidden="true" tabindex="-1"></a>    <span class="at">panel.grid.minor =</span> <span class="fu">element_blank</span>()</span>
+<span id="cb8-41"><a href="prison-addicts.html#cb8-41" aria-hidden="true" tabindex="-1"></a>  )</span></code></pre></div>
+<p><img src="_main_files/figure-html/unnamed-chunk-5-1.png" width="816" /></p>
+<p>Basically no change in either predictor by including them both in the model together. Another way of seeing whether <code>prison</code> is worth including in the model is with -2LL significance tests. Here’s how this works:</p>
+<ol style="list-style-type: decimal">
+<li>We assume changes in -2LL are chi-squared distributed;</li>
+<li>We calculate the difference in -2LL between the model with only <code>dose</code> and the model with both <code>dose</code> and <code>prison</code>;</li>
+<li>We ask whether that difference is statistically significant based on a 95%-threshold hypothesis test under a chi-squared distribution.</li>
+</ol>
+<p>We can do all of this with R’s basic <code>anova()</code> function:</p>
+<table class="table table-striped" style="margin-left: auto; margin-right: auto;">
+<caption>
+<span id="tab:anova">Table 1.4: </span>
+</caption>
+<thead>
+<tr>
+<th style="text-align:left;">
+Predictor
+</th>
+<th style="text-align:right;">
+-2LL
+</th>
+<th style="text-align:right;">
+Difference in -2LL
+</th>
+<th style="text-align:left;">
+p.value
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:left;">
+NULL
+</td>
+<td style="text-align:right;">
+-705.5393
+</td>
+<td style="text-align:right;">
+NA
+</td>
+<td style="text-align:left;">
+NA
+</td>
+</tr>
+<tr>
+<td style="text-align:left;">
+dose
+</td>
+<td style="text-align:right;">
+-687.0966
+</td>
+<td style="text-align:right;">
+36.885470
+</td>
+<td style="text-align:left;">
+1e-09
+</td>
+</tr>
+<tr>
+<td style="text-align:left;">
+prison
+</td>
+<td style="text-align:right;">
+-686.4344
+</td>
+<td style="text-align:right;">
+1.324296
+</td>
+<td style="text-align:left;">
+0.249822584
+</td>
+</tr>
+</tbody>
+</table>
+<p>Here we see that once <code>dose</code> is in the model, including <code>prison</code> has only a tiny effect on the model’s goodness-of-fit as measured by the -2LL, and this change is not statistically significant according to our chi-squared significance test. So we could feel ok about excluding <code>prison</code> from the model. But should we? I think the real answer is that it depends on our background knowledge, and what we’re trying to accomplish with this analysis. Despite the fact that <code>prison</code> doesn’t explain much variance within levels of treatment, we might still want to include it in the model if:</p>
+<ol style="list-style-type: decimal">
+<li>We are especially interested in making inferences about the role of <code>prison</code> in shaping the time-to-event;</li>
+<li>We’re working from a causal model that tells us that controlling for <code>prison</code> is important for getting an unbiased effect of another predictor we’re interested in. For example, maybe we think <code>prison</code> is a common cause of the treatment and the outcome. If this were true, then controlling for prison would be a good idea to help us feel good about our estimate of the treatment.</li>
+</ol>
+<p>Another way of getting at the question of whether <code>prisoner</code> is worth including in the model would have been to look at the plot of the Martingale residuals of the <code>dose</code>-only model against values of <code>prisoner</code>. But this doesn’t really work when the predictor you’re curious about, IE <code>prisoner</code>, is categorical as opposed to continuous.</p>
+</div>
+<div id="does-the-effect-of-dosage-amount-on-time-to-event-vary-by-prison-status" class="section level2 hasAnchor" number="1.4">
+<h2><span class="header-section-number">1.4</span> Does the effect of dosage amount on time-to-event vary by prison status?<a href="prison-addicts.html#does-the-effect-of-dosage-amount-on-time-to-event-vary-by-prison-status" class="anchor-section" aria-label="Anchor link to header"></a></h2>
+<p>So we’ve established that including both <code>prison</code> as a fixed effect in a model that already includes <code>dose</code> doesn’t really improve the model’s goodness of fit. But maybe dosage amounts worked <em>differently</em> for people in prison and people not in prison. In other words, maybe there’s an interaction between <code>prison</code> and <code>dose</code>.</p>
+<p>We can explore this by including a simple interaction in the Cox model and seeing whether it improves goodness of fit. We’ll just reuse the methods we’ve already used above, namely:</p>
+<ol style="list-style-type: decimal">
+<li>Looking at tables of regression outputs;</li>
+<li>Looking at forest plots;</li>
+<li>Using chi-squared significance testing on -2LL of the various models.</li>
+</ol>
+<table class="table table-striped" style="margin-left: auto; margin-right: auto;">
+<caption>
+<span id="tab:unnamed-chunk-6">Table 1.5: </span>
+</caption>
+<thead>
+<tr>
+<th style="text-align:left;">
+Term
+</th>
+<th style="text-align:right;">
+Estimate
+</th>
+<th style="text-align:right;">
+Std Error
+</th>
+<th style="text-align:left;">
+P Value
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:left;">
+dose
+</td>
+<td style="text-align:right;">
+0.9585780
+</td>
+<td style="text-align:right;">
+0.0078239
+</td>
+<td style="text-align:left;">
+1e-07
+</td>
+</tr>
+<tr>
+<td style="text-align:left;">
+prison
+</td>
+<td style="text-align:right;">
+0.5099255
+</td>
+<td style="text-align:right;">
+0.7100058
+</td>
+<td style="text-align:left;">
+0.342839
+</td>
+</tr>
+<tr>
+<td style="text-align:left;">
+dose:prison
+</td>
+<td style="text-align:right;">
+1.0148995
+</td>
+<td style="text-align:right;">
+0.0117982
+</td>
+<td style="text-align:left;">
+0.2100078
+</td>
+</tr>
+</tbody>
+</table>
+<p>Whoa – looks like including the interaction effect has completely flipped the relationship between <code>prison</code> and time-to-event. With the interaction effect included, the model thinks that being in prison <em>reduces</em> your risk of seeing the event. This despite the fact that the interaction effect itself is rather tiny, and that its 95% interval contains 1, IE is consistent with the hypothesis that there is no effect. This shows that estimates and p-values aren’t everything.</p>
+<p>Let’s get a closer look with a comparative forest plot:</p>
+<p><img src="_main_files/figure-html/unnamed-chunk-7-1.png" width="816" /></p>
+<p>Yup – looks like the model with the interaction effect completely flips the model’s mean estimate for <code>prison</code>. But it also makes it way more uncertain: just look at that giant 95% interval.</p>
+<p>Did including the interaction improve goodness of fit? We can do the same anova thing we did above:</p>
+<table class="table table-striped" style="margin-left: auto; margin-right: auto;">
+<caption>
+<span id="tab:unnamed-chunk-8">Table 1.6: </span>
+</caption>
+<thead>
+<tr>
+<th style="text-align:left;">
+Predictor
+</th>
+<th style="text-align:right;">
+-2LL
+</th>
+<th style="text-align:right;">
+Difference in -2LL
+</th>
+<th style="text-align:left;">
+p.value
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:left;">
+NULL
+</td>
+<td style="text-align:right;">
+-705.5393
+</td>
+<td style="text-align:right;">
+NA
+</td>
+<td style="text-align:left;">
+NA
+</td>
+</tr>
+<tr>
+<td style="text-align:left;">
+dose
+</td>
+<td style="text-align:right;">
+-687.0966
+</td>
+<td style="text-align:right;">
+36.885470
+</td>
+<td style="text-align:left;">
+1e-09
+</td>
+</tr>
+<tr>
+<td style="text-align:left;">
+prison
+</td>
+<td style="text-align:right;">
+-686.4344
+</td>
+<td style="text-align:right;">
+1.324296
+</td>
+<td style="text-align:left;">
+0.249822584
+</td>
+</tr>
+<tr>
+<td style="text-align:left;">
+dose:prison
+</td>
+<td style="text-align:right;">
+-685.6499
+</td>
+<td style="text-align:right;">
+1.569020
+</td>
+<td style="text-align:left;">
+0.21034932
+</td>
+</tr>
+</tbody>
+</table>
+<p>Including the interaction seems to improve goodness-of-fit more than including <code>prison</code> did, but the difference is still not statistically significant. But still, including it has produced a very drastic and important change in our inference! Once again, p-values are not everything.</p>
+<p>Interaction effects are hard to interpret based on squinting at numbers alone. So lastly, we can get a sense of what the model now believes by plotting a ‘triptych’, as recommended by McElreath. We’ll simulate some fake data to visualize the impact of the interaction. This is largely a copy-paste of the squid-monster code above, but now we’re faceting:</p>
+<div class="sourceCode" id="cb9"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb9-1"><a href="prison-addicts.html#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="fu">bind_rows</span>(</span>
+<span id="cb9-2"><a href="prison-addicts.html#cb9-2" aria-hidden="true" tabindex="-1"></a>  survminer<span class="sc">::</span><span class="fu">surv_adjustedcurves</span>(cox.interaction, <span class="at">data =</span> <span class="fu">tibble</span>(<span class="at">dose =</span> <span class="dv">0</span>, <span class="at">prison =</span> <span class="dv">0</span>)) <span class="sc">%&gt;%</span> <span class="fu">mutate</span>(<span class="at">dosage =</span> <span class="st">&quot;Dose = 0&quot;</span>, <span class="at">prison =</span> <span class="st">&quot;Non-Prison&quot;</span>),</span>
+<span id="cb9-3"><a href="prison-addicts.html#cb9-3" aria-hidden="true" tabindex="-1"></a>  survminer<span class="sc">::</span><span class="fu">surv_adjustedcurves</span>(cox.interaction, <span class="at">data =</span> <span class="fu">tibble</span>(<span class="at">dose =</span> <span class="dv">40</span>, <span class="at">prison =</span> <span class="dv">0</span>)) <span class="sc">%&gt;%</span> <span class="fu">mutate</span>(<span class="at">dosage =</span> <span class="st">&quot;Dose = 40&quot;</span>, <span class="at">prison =</span> <span class="st">&quot;Non-Prison&quot;</span>),</span>
+<span id="cb9-4"><a href="prison-addicts.html#cb9-4" aria-hidden="true" tabindex="-1"></a>  survminer<span class="sc">::</span><span class="fu">surv_adjustedcurves</span>(cox.interaction, <span class="at">data =</span> <span class="fu">tibble</span>(<span class="at">dose =</span> <span class="dv">80</span>, <span class="at">prison =</span> <span class="dv">0</span>)) <span class="sc">%&gt;%</span> <span class="fu">mutate</span>(<span class="at">dosage =</span> <span class="st">&quot;Dose = 80&quot;</span>, <span class="at">prison =</span> <span class="st">&quot;Non-Prison&quot;</span>),</span>
+<span id="cb9-5"><a href="prison-addicts.html#cb9-5" aria-hidden="true" tabindex="-1"></a>  survminer<span class="sc">::</span><span class="fu">surv_adjustedcurves</span>(cox.interaction, <span class="at">data =</span> <span class="fu">tibble</span>(<span class="at">dose =</span> <span class="dv">0</span>, <span class="at">prison =</span> <span class="dv">1</span>)) <span class="sc">%&gt;%</span> <span class="fu">mutate</span>(<span class="at">dosage =</span> <span class="st">&quot;Dose = 0&quot;</span>, <span class="at">prison =</span> <span class="st">&quot;Prison&quot;</span>),</span>
+<span id="cb9-6"><a href="prison-addicts.html#cb9-6" aria-hidden="true" tabindex="-1"></a>  survminer<span class="sc">::</span><span class="fu">surv_adjustedcurves</span>(cox.interaction, <span class="at">data =</span> <span class="fu">tibble</span>(<span class="at">dose =</span> <span class="dv">40</span>, <span class="at">prison =</span> <span class="dv">1</span>)) <span class="sc">%&gt;%</span> <span class="fu">mutate</span>(<span class="at">dosage =</span> <span class="st">&quot;Dose = 40&quot;</span>, <span class="at">prison =</span> <span class="st">&quot;Prison&quot;</span>),</span>
+<span id="cb9-7"><a href="prison-addicts.html#cb9-7" aria-hidden="true" tabindex="-1"></a>  survminer<span class="sc">::</span><span class="fu">surv_adjustedcurves</span>(cox.interaction, <span class="at">data =</span> <span class="fu">tibble</span>(<span class="at">dose =</span> <span class="dv">80</span>, <span class="at">prison =</span> <span class="dv">1</span>)) <span class="sc">%&gt;%</span> <span class="fu">mutate</span>(<span class="at">dosage =</span> <span class="st">&quot;Dose = 80&quot;</span>, <span class="at">prison =</span> <span class="st">&quot;Prison&quot;</span>),</span>
+<span id="cb9-8"><a href="prison-addicts.html#cb9-8" aria-hidden="true" tabindex="-1"></a>) <span class="sc">%&gt;%</span> </span>
+<span id="cb9-9"><a href="prison-addicts.html#cb9-9" aria-hidden="true" tabindex="-1"></a>  </span>
+<span id="cb9-10"><a href="prison-addicts.html#cb9-10" aria-hidden="true" tabindex="-1"></a>  <span class="co"># Plot</span></span>
+<span id="cb9-11"><a href="prison-addicts.html#cb9-11" aria-hidden="true" tabindex="-1"></a>  <span class="fu">ggplot</span>(<span class="fu">aes</span>(<span class="at">x =</span> time, <span class="at">y =</span> surv, <span class="at">group =</span> prison, <span class="at">colour =</span> prison)) <span class="sc">+</span></span>
+<span id="cb9-12"><a href="prison-addicts.html#cb9-12" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_point</span>(<span class="at">size =</span> <span class="dv">1</span>) <span class="sc">+</span></span>
+<span id="cb9-13"><a href="prison-addicts.html#cb9-13" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_line</span>(<span class="at">size =</span> <span class="dv">1</span>) <span class="sc">+</span></span>
+<span id="cb9-14"><a href="prison-addicts.html#cb9-14" aria-hidden="true" tabindex="-1"></a>  <span class="fu">scale_colour_manual</span>(<span class="at">values=</span><span class="fu">c</span>(<span class="st">&quot;deepskyblue4&quot;</span>, <span class="st">&quot;burlywood4&quot;</span>)) <span class="sc">+</span></span>
+<span id="cb9-15"><a href="prison-addicts.html#cb9-15" aria-hidden="true" tabindex="-1"></a>  <span class="fu">theme_bw</span>() <span class="sc">+</span> </span>
+<span id="cb9-16"><a href="prison-addicts.html#cb9-16" aria-hidden="true" tabindex="-1"></a>  <span class="fu">theme</span>(</span>
+<span id="cb9-17"><a href="prison-addicts.html#cb9-17" aria-hidden="true" tabindex="-1"></a>    <span class="at">plot.title =</span> <span class="fu">element_text</span>(<span class="at">face =</span> <span class="st">&quot;bold&quot;</span>, <span class="at">size =</span> <span class="dv">12</span>),</span>
+<span id="cb9-18"><a href="prison-addicts.html#cb9-18" aria-hidden="true" tabindex="-1"></a>    <span class="at">legend.background =</span> <span class="fu">element_rect</span>(<span class="at">fill =</span> <span class="st">&quot;white&quot;</span>, <span class="at">size =</span> <span class="dv">4</span>, <span class="at">colour =</span> <span class="st">&quot;white&quot;</span>),</span>
+<span id="cb9-19"><a href="prison-addicts.html#cb9-19" aria-hidden="true" tabindex="-1"></a>    <span class="at">legend.justification =</span> <span class="fu">c</span>(<span class="dv">0</span>, <span class="dv">1</span>),</span>
+<span id="cb9-20"><a href="prison-addicts.html#cb9-20" aria-hidden="true" tabindex="-1"></a>    <span class="at">legend.position =</span> <span class="st">&quot;bottom&quot;</span>,</span>
+<span id="cb9-21"><a href="prison-addicts.html#cb9-21" aria-hidden="true" tabindex="-1"></a>    <span class="at">axis.ticks =</span> <span class="fu">element_line</span>(<span class="at">colour =</span> <span class="st">&quot;grey70&quot;</span>, <span class="at">size =</span> <span class="fl">0.2</span>),</span>
+<span id="cb9-22"><a href="prison-addicts.html#cb9-22" aria-hidden="true" tabindex="-1"></a>    <span class="at">panel.grid.major =</span> <span class="fu">element_line</span>(<span class="at">colour =</span> <span class="st">&quot;grey70&quot;</span>, <span class="at">size =</span> <span class="fl">0.2</span>),</span>
+<span id="cb9-23"><a href="prison-addicts.html#cb9-23" aria-hidden="true" tabindex="-1"></a>    <span class="at">panel.grid.minor =</span> <span class="fu">element_blank</span>(),</span>
+<span id="cb9-24"><a href="prison-addicts.html#cb9-24" aria-hidden="true" tabindex="-1"></a>    <span class="at">legend.title =</span> <span class="fu">element_blank</span>() </span>
+<span id="cb9-25"><a href="prison-addicts.html#cb9-25" aria-hidden="true" tabindex="-1"></a>  ) <span class="sc">+</span></span>
+<span id="cb9-26"><a href="prison-addicts.html#cb9-26" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb9-27"><a href="prison-addicts.html#cb9-27" aria-hidden="true" tabindex="-1"></a>    <span class="fu">facet_wrap</span>(<span class="sc">~</span>dosage)</span></code></pre></div>
+<p><img src="_main_files/figure-html/unnamed-chunk-9-1.png" width="816" /></p>
+<p>By including the interaction, we’ve essentially told the model that the relationship between dosage and time-to-event depends on whether you’re in prison or not. So it seems like what’s happening is that the model thinks prisoners are better off in the absence of any treatment or at low values of treatment (hence the flipped effect estimate for the fixed effect <code>prison</code>), but then as you increase the dosage, the benefits accrue more to non-prisoners than to prisoners. Taken literally, I think the interaction effect is saying “prisoner relative hazard increases as you increase the dosage”.</p>
+<p>What to make of this? I’m not really sure. <a href="https://stats.stackexchange.com/questions/546128/interpreting-coefficient-changes-in-cox-ph-model-involving-interactions?noredirect=1&amp;lq=1">Frank Harrell says that we’re not really supposed to try and interpret the main effects in a model with an interaction</a>, so the fact that the direction of the effect of <code>prison</code> totally switches is maybe not actually an important thing. But on the other hand, I’m dying to know why the model thinks this is how the interaction works.</p>
+<p>One thing that might help us understand is to look at some descriptive plots for different levels of dosage, stratified by <code>prison</code>. The idea is that maybe at low dosages the prison people actually <em>are</em> better-off, and the opposite is true at higher doses. So here’s what I’ll do:</p>
+<ol style="list-style-type: decimal">
+<li>Code a new <code>dosage_group</code> variable with some arbitrary cutoffs: we’ll say you’re a ‘low’ dosage at 45 or less, a ‘medium’ between 45 and 70, and a ‘high’ above 70.</li>
+<li>Draw some new Kaplan-Meier curves to see how the survival curves are different for prison and non-prison people <em>within each dosage group</em>. Rather than rely on <strong>survminer</strong> to draw the Kaplan-Meier curves like I did above, this time I’ll make the plots myself for greater control of aesthetics.</li>
+</ol>
+<div class="sourceCode" id="cb10"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb10-1"><a href="prison-addicts.html#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Create a new dataset with arbitrary &#39;dosage groups&#39; </span></span>
+<span id="cb10-2"><a href="prison-addicts.html#cb10-2" aria-hidden="true" tabindex="-1"></a>dat_dose_strat <span class="ot">&lt;-</span> dat <span class="sc">%&gt;%</span></span>
+<span id="cb10-3"><a href="prison-addicts.html#cb10-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb10-4"><a href="prison-addicts.html#cb10-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">mutate</span>(<span class="at">dosage_group =</span> <span class="fu">case_when</span>(</span>
+<span id="cb10-5"><a href="prison-addicts.html#cb10-5" aria-hidden="true" tabindex="-1"></a>    dose <span class="sc">&lt;=</span> <span class="dv">45</span> <span class="sc">~</span> <span class="st">&quot;low&quot;</span>,</span>
+<span id="cb10-6"><a href="prison-addicts.html#cb10-6" aria-hidden="true" tabindex="-1"></a>    dose <span class="sc">&gt;</span> <span class="dv">45</span> <span class="sc">&amp;</span> dose <span class="sc">&lt;=</span> <span class="dv">70</span> <span class="sc">~</span> <span class="st">&quot;medium&quot;</span>,</span>
+<span id="cb10-7"><a href="prison-addicts.html#cb10-7" aria-hidden="true" tabindex="-1"></a>    <span class="fu">as.numeric</span>(dose) <span class="sc">&gt;</span> <span class="dv">70</span> <span class="sc">~</span> <span class="st">&quot;high&quot;</span></span>
+<span id="cb10-8"><a href="prison-addicts.html#cb10-8" aria-hidden="true" tabindex="-1"></a>  )) </span>
+<span id="cb10-9"><a href="prison-addicts.html#cb10-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb10-10"><a href="prison-addicts.html#cb10-10" aria-hidden="true" tabindex="-1"></a><span class="co"># Create survival object</span></span>
+<span id="cb10-11"><a href="prison-addicts.html#cb10-11" aria-hidden="true" tabindex="-1"></a>surv_object_dosage_groups <span class="ot">&lt;-</span> <span class="fu">Surv</span>(dat_dose_strat<span class="sc">$</span>days_survival, dat_dose_strat<span class="sc">$</span>status)</span>
+<span id="cb10-12"><a href="prison-addicts.html#cb10-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb10-13"><a href="prison-addicts.html#cb10-13" aria-hidden="true" tabindex="-1"></a><span class="co"># Get Kaplan-Meier estimates</span></span>
+<span id="cb10-14"><a href="prison-addicts.html#cb10-14" aria-hidden="true" tabindex="-1"></a>km.dosage.groups <span class="ot">&lt;-</span> <span class="fu">survfit</span>(surv_object_dosage_groups <span class="sc">~</span> <span class="dv">1</span> <span class="sc">+</span> prison <span class="sc">+</span> <span class="fu">strata</span>(dosage_group), <span class="at">data =</span> dat_dose_strat)</span>
+<span id="cb10-15"><a href="prison-addicts.html#cb10-15" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb10-16"><a href="prison-addicts.html#cb10-16" aria-hidden="true" tabindex="-1"></a><span class="co"># Create survival object</span></span>
+<span id="cb10-17"><a href="prison-addicts.html#cb10-17" aria-hidden="true" tabindex="-1"></a>surv_object_dosage_groups <span class="ot">&lt;-</span> <span class="fu">Surv</span>(dat_dose_strat<span class="sc">$</span>days_survival, dat_dose_strat<span class="sc">$</span>status)</span>
+<span id="cb10-18"><a href="prison-addicts.html#cb10-18" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb10-19"><a href="prison-addicts.html#cb10-19" aria-hidden="true" tabindex="-1"></a><span class="co"># Get Kaplan-Meier estimates</span></span>
+<span id="cb10-20"><a href="prison-addicts.html#cb10-20" aria-hidden="true" tabindex="-1"></a>km.dosage.groups <span class="ot">&lt;-</span> <span class="fu">survfit</span>(surv_object_dosage_groups <span class="sc">~</span> <span class="dv">1</span> <span class="sc">+</span> prison <span class="sc">+</span> <span class="fu">strata</span>(dosage_group), <span class="at">data =</span> dat_dose_strat)</span>
+<span id="cb10-21"><a href="prison-addicts.html#cb10-21" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb10-22"><a href="prison-addicts.html#cb10-22" aria-hidden="true" tabindex="-1"></a><span class="co"># Clean and plot</span></span>
+<span id="cb10-23"><a href="prison-addicts.html#cb10-23" aria-hidden="true" tabindex="-1"></a>km.dosage.groups <span class="sc">%&gt;%</span> </span>
+<span id="cb10-24"><a href="prison-addicts.html#cb10-24" aria-hidden="true" tabindex="-1"></a>  </span>
+<span id="cb10-25"><a href="prison-addicts.html#cb10-25" aria-hidden="true" tabindex="-1"></a>  broom<span class="sc">::</span><span class="fu">tidy</span>() <span class="sc">%&gt;%</span> </span>
+<span id="cb10-26"><a href="prison-addicts.html#cb10-26" aria-hidden="true" tabindex="-1"></a>  </span>
+<span id="cb10-27"><a href="prison-addicts.html#cb10-27" aria-hidden="true" tabindex="-1"></a>  janitor<span class="sc">::</span><span class="fu">clean_names</span>() <span class="sc">%&gt;%</span> </span>
+<span id="cb10-28"><a href="prison-addicts.html#cb10-28" aria-hidden="true" tabindex="-1"></a>  </span>
+<span id="cb10-29"><a href="prison-addicts.html#cb10-29" aria-hidden="true" tabindex="-1"></a>  <span class="fu">mutate</span>(</span>
+<span id="cb10-30"><a href="prison-addicts.html#cb10-30" aria-hidden="true" tabindex="-1"></a>    <span class="at">prison       =</span> <span class="fu">str_extract</span>(strata, <span class="st">&quot;</span><span class="sc">\\</span><span class="st">d&quot;</span>),</span>
+<span id="cb10-31"><a href="prison-addicts.html#cb10-31" aria-hidden="true" tabindex="-1"></a>    <span class="at">dosage_group =</span> <span class="fu">factor</span>(<span class="fu">str_extract</span>(strata, <span class="st">&quot;high|medium|low&quot;</span>), <span class="at">levels=</span><span class="fu">c</span>(<span class="st">&quot;low&quot;</span>, <span class="st">&quot;medium&quot;</span>, <span class="st">&quot;high&quot;</span>))</span>
+<span id="cb10-32"><a href="prison-addicts.html#cb10-32" aria-hidden="true" tabindex="-1"></a>  ) <span class="sc">%&gt;%</span> </span>
+<span id="cb10-33"><a href="prison-addicts.html#cb10-33" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb10-34"><a href="prison-addicts.html#cb10-34" aria-hidden="true" tabindex="-1"></a>  <span class="fu">ggplot</span>(<span class="fu">aes</span>(<span class="at">x =</span> time, <span class="at">y =</span> estimate, <span class="at">group =</span> prison, <span class="at">colour =</span> prison, <span class="at">fill =</span> prison)) <span class="sc">+</span></span>
+<span id="cb10-35"><a href="prison-addicts.html#cb10-35" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_point</span>(<span class="at">shape =</span> <span class="dv">3</span>, <span class="at">size =</span> <span class="dv">2</span>) <span class="sc">+</span> </span>
+<span id="cb10-36"><a href="prison-addicts.html#cb10-36" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_line</span>(<span class="at">size =</span> <span class="dv">1</span>) <span class="sc">+</span> </span>
+<span id="cb10-37"><a href="prison-addicts.html#cb10-37" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_ribbon</span>(<span class="fu">aes</span>(<span class="at">ymin =</span> conf_low, <span class="at">ymax =</span> conf_high), <span class="at">alpha=</span><span class="fl">0.2</span>, <span class="at">linetype =</span> <span class="dv">0</span>) <span class="sc">+</span></span>
+<span id="cb10-38"><a href="prison-addicts.html#cb10-38" aria-hidden="true" tabindex="-1"></a>  <span class="fu">scale_colour_manual</span>(<span class="at">values=</span><span class="fu">c</span>(<span class="st">&quot;deepskyblue4&quot;</span>, <span class="st">&quot;burlywood4&quot;</span>)) <span class="sc">+</span></span>
+<span id="cb10-39"><a href="prison-addicts.html#cb10-39" aria-hidden="true" tabindex="-1"></a>  <span class="fu">scale_fill_manual</span>(<span class="at">values=</span><span class="fu">c</span>(<span class="st">&quot;deepskyblue4&quot;</span>, <span class="st">&quot;burlywood4&quot;</span>)) <span class="sc">+</span></span>
+<span id="cb10-40"><a href="prison-addicts.html#cb10-40" aria-hidden="true" tabindex="-1"></a>  <span class="fu">theme_bw</span>() <span class="sc">+</span> </span>
+<span id="cb10-41"><a href="prison-addicts.html#cb10-41" aria-hidden="true" tabindex="-1"></a>  <span class="fu">theme</span>(</span>
+<span id="cb10-42"><a href="prison-addicts.html#cb10-42" aria-hidden="true" tabindex="-1"></a>    <span class="at">plot.title =</span> <span class="fu">element_text</span>(<span class="at">face =</span> <span class="st">&quot;bold&quot;</span>, <span class="at">size =</span> <span class="dv">12</span>),</span>
+<span id="cb10-43"><a href="prison-addicts.html#cb10-43" aria-hidden="true" tabindex="-1"></a>    <span class="at">legend.background =</span> <span class="fu">element_rect</span>(<span class="at">fill =</span> <span class="st">&quot;white&quot;</span>, <span class="at">size =</span> <span class="dv">4</span>, <span class="at">colour =</span> <span class="st">&quot;white&quot;</span>),</span>
+<span id="cb10-44"><a href="prison-addicts.html#cb10-44" aria-hidden="true" tabindex="-1"></a>    <span class="at">legend.justification =</span> <span class="fu">c</span>(<span class="dv">0</span>, <span class="dv">1</span>),</span>
+<span id="cb10-45"><a href="prison-addicts.html#cb10-45" aria-hidden="true" tabindex="-1"></a>    <span class="at">legend.position =</span> <span class="st">&quot;bottom&quot;</span>,</span>
+<span id="cb10-46"><a href="prison-addicts.html#cb10-46" aria-hidden="true" tabindex="-1"></a>    <span class="at">axis.ticks =</span> <span class="fu">element_line</span>(<span class="at">colour =</span> <span class="st">&quot;grey70&quot;</span>, <span class="at">size =</span> <span class="fl">0.2</span>),</span>
+<span id="cb10-47"><a href="prison-addicts.html#cb10-47" aria-hidden="true" tabindex="-1"></a>    <span class="at">panel.grid.major =</span> <span class="fu">element_line</span>(<span class="at">colour =</span> <span class="st">&quot;grey70&quot;</span>, <span class="at">size =</span> <span class="fl">0.2</span>),</span>
+<span id="cb10-48"><a href="prison-addicts.html#cb10-48" aria-hidden="true" tabindex="-1"></a>    <span class="at">panel.grid.minor =</span> <span class="fu">element_blank</span>()</span>
+<span id="cb10-49"><a href="prison-addicts.html#cb10-49" aria-hidden="true" tabindex="-1"></a>  ) <span class="sc">+</span></span>
+<span id="cb10-50"><a href="prison-addicts.html#cb10-50" aria-hidden="true" tabindex="-1"></a>  <span class="fu">facet_wrap</span>(<span class="sc">~</span>dosage_group)</span></code></pre></div>
+<p><img src="_main_files/figure-html/unnamed-chunk-10-1.png" width="816" /></p>
+<p>These janky Kaplan-Meier wannabes actually illustrate why the model fits the interaction the way that it does: we see that empirically, prisoners are actully better off at low doses of the treatment, even though when we <em>average across dosage</em>, as we implicitly did above with the Kaplan-Meier curves stratified by <code>prison</code> only, prisoners are worse-off across the board. This is a nice reveal that illustrates the importance of exploring interactions! But also, notice that there are fewer low-dosage prisoners overall, so this pattern could just be noise. Either way, it makes sense that the model would flip the direction of the effect of prison as a way of representing this difference between dosage groups. It doesn’t mean we have to take the model literally when it does this: it is just a way for the model to say what it is trying to say about the interaction, IE to say that prison people are at greater relative risk at higher doses compared to at lower doses. Don’t get sucked into the trap of interpreting the parameter estimates as causal.</p>
+<p>Now we have an idea why the model with the interaction thinks what it thinks. But the model with the interaction fails the likelihood ratio test, so we don’t favour it on the grounds of goodness-of-fit. And we don’t really have a clear causal theory for why this interaction would exist. So which model should we believe? Maybe neither, but we can keep them both in mind.</p>
+</div>
+<div id="is-the-proportional-hazards-assumption-justified-given-the-possibility-of-different-baseline-hazards-across-clinics" class="section level2 hasAnchor" number="1.5">
+<h2><span class="header-section-number">1.5</span> Is the proportional hazards assumption justified given the possibility of different baseline hazards across clinics?<a href="prison-addicts.html#is-the-proportional-hazards-assumption-justified-given-the-possibility-of-different-baseline-hazards-across-clinics" class="anchor-section" aria-label="Anchor link to header"></a></h2>
+<p>Let’s replicate our workflow above to plot the log cumulative hazards and Schoenfeld residuals for the <code>clinic</code> variable to see whether the proportional hazards assumption seems to hold.</p>
+<p><img src="_main_files/figure-html/unnamed-chunk-11-1.png" width="816" /></p>
+<p>Looks <em>kind of</em> proportional for the most part, except that they’re pretty neck-and-neck for the first couple months, and then people in clinic 1 start seeing more events than people in clinic 2 as of about day 500.</p>
+<p>And now the Schoenfeld residuals:</p>
+<p><img src="_main_files/figure-html/unnamed-chunk-12-1.png" width="816" /></p>
+<p>You can sort of see how there is a downwards sloping trend in the plot at later times, which I think is just the residuals picking up on what we saw in the cumulative hazard curves, IE that people in clinic 1 start seeing way more events than people at clinic 2 at later times. And it looks like the p-value of the Schoenfeld residuals is significant, so we’re supposed to not feel great about the proportional hazards assumption for <code>clinic</code>. Whuh-oh.</p>
+<p>What to do? Since this is clustered data we could do a frailty model, but there’s only two clusters, which is going to make for a pretty noisy estimate of the cluster-level variation. Maybe better to just do a stratified regression here. Singer and Willett prefer time-varying effects as a way of dealing with what seem to be different baseline hazards across clusters because with stratified Cox you lose the ability to model that variable. But they also say that if the clustering variable isn’t really of interest to you then sure, go ahead and do a Stratified cox. So that’s what I’ll do.</p>
+<div class="sourceCode" id="cb11"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb11-1"><a href="prison-addicts.html#cb11-1" aria-hidden="true" tabindex="-1"></a>cox.dose.prison.clinic <span class="ot">&lt;-</span> <span class="fu">coxph</span>(surv_object <span class="sc">~</span> <span class="dv">1</span> <span class="sc">+</span> dose <span class="sc">+</span> prison <span class="sc">+</span> <span class="fu">strata</span>(clinic), <span class="at">data =</span> dat)</span>
+<span id="cb11-2"><a href="prison-addicts.html#cb11-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb11-3"><a href="prison-addicts.html#cb11-3" aria-hidden="true" tabindex="-1"></a>cox.interaction.clinic <span class="ot">&lt;-</span> <span class="fu">coxph</span>(surv_object <span class="sc">~</span> <span class="dv">1</span> <span class="sc">+</span> dose <span class="sc">+</span> prison <span class="sc">+</span> dose<span class="sc">:</span>prison <span class="sc">+</span> <span class="fu">strata</span>(clinic), <span class="at">data =</span> dat)</span></code></pre></div>
+<p>Now let’s see how the estimates and their uncertainties are changed, if at all, by stratifying our regression on <code>clinic</code>. We can plot the table of regression outputs and also reuse the code from the forest plot above:</p>
+<table class="table table-striped" style="margin-left: auto; margin-right: auto;">
+<caption>
+<span id="tab:unnamed-chunk-14">Table 1.7: </span>
+</caption>
+<thead>
+<tr>
+<th style="text-align:left;">
+model
+</th>
+<th style="text-align:left;">
+term
+</th>
+<th style="text-align:right;">
+estimate
+</th>
+<th style="text-align:right;">
+conf.low
+</th>
+<th style="text-align:right;">
+conf.high
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:left;">
+Prison only
+</td>
+<td style="text-align:left;">
+prison
+</td>
+<td style="text-align:right;">
+1.2018211
+</td>
+<td style="text-align:right;">
+0.8710520
+</td>
+<td style="text-align:right;">
+1.6581949
+</td>
+</tr>
+<tr>
+<td style="text-align:left;">
+Dose only
+</td>
+<td style="text-align:left;">
+dose
+</td>
+<td style="text-align:right;">
+0.9647342
+</td>
+<td style="text-align:right;">
+0.9534989
+</td>
+<td style="text-align:right;">
+0.9761019
+</td>
+</tr>
+<tr>
+<td style="text-align:left;">
+Prison + dose
+</td>
+<td style="text-align:left;">
+dose
+</td>
+<td style="text-align:right;">
+0.9645658
+</td>
+<td style="text-align:right;">
+0.9532887
+</td>
+<td style="text-align:right;">
+0.9759764
+</td>
+</tr>
+<tr>
+<td style="text-align:left;">
+Prison + dose
+</td>
+<td style="text-align:left;">
+prison
+</td>
+<td style="text-align:right;">
+1.2088325
+</td>
+<td style="text-align:right;">
+0.8760633
+</td>
+<td style="text-align:right;">
+1.6680027
+</td>
+</tr>
+<tr>
+<td style="text-align:left;">
+Prison + dose + prison:dose
+</td>
+<td style="text-align:left;">
+dose
+</td>
+<td style="text-align:right;">
+0.9585780
+</td>
+<td style="text-align:right;">
+0.9439907
+</td>
+<td style="text-align:right;">
+0.9733908
+</td>
+</tr>
+<tr>
+<td style="text-align:left;">
+Prison + dose + prison:dose
+</td>
+<td style="text-align:left;">
+prison
+</td>
+<td style="text-align:right;">
+0.5099255
+</td>
+<td style="text-align:right;">
+0.1268086
+</td>
+<td style="text-align:right;">
+2.0505233
+</td>
+</tr>
+<tr>
+<td style="text-align:left;">
+Prison + dose + prison:dose
+</td>
+<td style="text-align:left;">
+dose:prison
+</td>
+<td style="text-align:right;">
+1.0148995
+</td>
+<td style="text-align:right;">
+0.9917001
+</td>
+<td style="text-align:right;">
+1.0386416
+</td>
+</tr>
+<tr>
+<td style="text-align:left;">
+prison + dose (strat by clinic)
+</td>
+<td style="text-align:left;">
+dose
+</td>
+<td style="text-align:right;">
+0.9654947
+</td>
+<td style="text-align:right;">
+0.9533381
+</td>
+<td style="text-align:right;">
+0.9778063
+</td>
+</tr>
+<tr>
+<td style="text-align:left;">
+prison + dose (strat by clinic)
+</td>
+<td style="text-align:left;">
+prison
+</td>
+<td style="text-align:right;">
+1.4763969
+</td>
+<td style="text-align:right;">
+1.0602539
+</td>
+<td style="text-align:right;">
+2.0558735
+</td>
+</tr>
+<tr>
+<td style="text-align:left;">
+Prison + dose + prison:dose (strat by clinic)
+</td>
+<td style="text-align:left;">
+dose
+</td>
+<td style="text-align:right;">
+0.9617694
+</td>
+<td style="text-align:right;">
+0.9464146
+</td>
+<td style="text-align:right;">
+0.9773733
+</td>
+</tr>
+<tr>
+<td style="text-align:left;">
+Prison + dose + prison:dose (strat by clinic)
+</td>
+<td style="text-align:left;">
+prison
+</td>
+<td style="text-align:right;">
+0.8242719
+</td>
+<td style="text-align:right;">
+0.1790036
+</td>
+<td style="text-align:right;">
+3.7955881
+</td>
+</tr>
+<tr>
+<td style="text-align:left;">
+Prison + dose + prison:dose (strat by clinic)
+</td>
+<td style="text-align:left;">
+dose:prison
+</td>
+<td style="text-align:right;">
+1.0100059
+</td>
+<td style="text-align:right;">
+0.9846573
+</td>
+<td style="text-align:right;">
+1.0360071
+</td>
+</tr>
+</tbody>
+</table>
+<p><img src="_main_files/figure-html/unnamed-chunk-15-1.png" width="816" /></p>
+<p>In the models without the interaction, it looks like stratifying by <code>clinic</code> makes the model think <code>prison</code> is even more hazardous. and in the models <em>with</em> the interaction, we see that the flip of the hazard ratio of <code>prison</code> is less pronounced than in the non-stratified model, and its 95% interval is way bigger. Based on what we saw above, this suggests to me that even when we stratify on <code>clinic</code>, prisoners may be doing every so slightly better than non-prisoners at low dosages, but less than when we pool everyone across clinics.</p>
+<p>But a main takeaway is that no matter what we do, the main treatment effect is remarkably stable. The treatment works.</p>
+</div>
+<div id="parametric-models-vs-cox-model" class="section level2 hasAnchor" number="1.6">
+<h2><span class="header-section-number">1.6</span> Parametric Models vs Cox Model<a href="prison-addicts.html#parametric-models-vs-cox-model" class="anchor-section" aria-label="Anchor link to header"></a></h2>
+<p>Just for fun, lets fit some parametric survival models and see how they compare with the Cox model in terms of goodness of fit. We’ll try out exponential and Weibull proportional hazard models, as well as a log-logistic AFT. I don’t have high hopes for the exponential or Weibull models because none of the curves thus far suggest to me a flat or strictly monotonic baseline hazard function, but the log-logistic could be interesting by giving us something more flexible.</p>
+<div class="sourceCode" id="cb12"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb12-1"><a href="prison-addicts.html#cb12-1" aria-hidden="true" tabindex="-1"></a>m.weibull <span class="ot">&lt;-</span> <span class="fu">survreg</span>(surv_object <span class="sc">~</span> dose <span class="sc">+</span> prison, dat, <span class="at">dist=</span><span class="st">&#39;weibull&#39;</span>)</span>
+<span id="cb12-2"><a href="prison-addicts.html#cb12-2" aria-hidden="true" tabindex="-1"></a>m.exponential <span class="ot">&lt;-</span> <span class="fu">survreg</span>(surv_object <span class="sc">~</span> dose <span class="sc">+</span> prison, dat, <span class="at">dist=</span><span class="st">&#39;exp&#39;</span>)</span>
+<span id="cb12-3"><a href="prison-addicts.html#cb12-3" aria-hidden="true" tabindex="-1"></a>m.loglogistic <span class="ot">&lt;-</span> <span class="fu">survreg</span>(surv_object <span class="sc">~</span> dose <span class="sc">+</span> prison, dat, <span class="at">dist =</span> <span class="st">&quot;loglogistic&quot;</span>)</span></code></pre></div>
+<p>There’s some tricky conversion we need to do to interpret our parametric estimates when we use the survival function, because the Weibull (and exponential, which is a special case of Weibull) results have the magic property of being able to be interpreted either as hazard ratios <em>or</em> acceleration factors. <a href="https://rstudio-pubs-static.s3.amazonaws.com/5564_bc9e2d9a458c4660aa82882df90b7a6b.html">This nice markdown document</a> provides a walkthrough of the transformations required to move between these two interpretations.</p>
+<p>First let’s see how the Weibull and exponential estimated hazard ratios stack up against our classic Cox regression from above:</p>
+<div class="sourceCode" id="cb13"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb13-1"><a href="prison-addicts.html#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="fu">bind_rows</span>(</span>
+<span id="cb13-2"><a href="prison-addicts.html#cb13-2" aria-hidden="true" tabindex="-1"></a>  </span>
+<span id="cb13-3"><a href="prison-addicts.html#cb13-3" aria-hidden="true" tabindex="-1"></a>  <span class="co"># The Cox estimates</span></span>
+<span id="cb13-4"><a href="prison-addicts.html#cb13-4" aria-hidden="true" tabindex="-1"></a>  cox.prison.dose <span class="sc">%&gt;%</span> </span>
+<span id="cb13-5"><a href="prison-addicts.html#cb13-5" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb13-6"><a href="prison-addicts.html#cb13-6" aria-hidden="true" tabindex="-1"></a>    broom<span class="sc">::</span><span class="fu">tidy</span>(<span class="at">exponentiate =</span> <span class="cn">TRUE</span>, <span class="at">conf.int =</span> <span class="cn">TRUE</span>) <span class="sc">%&gt;%</span> </span>
+<span id="cb13-7"><a href="prison-addicts.html#cb13-7" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb13-8"><a href="prison-addicts.html#cb13-8" aria-hidden="true" tabindex="-1"></a>    <span class="fu">mutate</span>(<span class="at">family =</span> <span class="st">&quot;Classic Cox&quot;</span>),</span>
+<span id="cb13-9"><a href="prison-addicts.html#cb13-9" aria-hidden="true" tabindex="-1"></a>  </span>
+<span id="cb13-10"><a href="prison-addicts.html#cb13-10" aria-hidden="true" tabindex="-1"></a>  <span class="co"># The parametric estimates</span></span>
+<span id="cb13-11"><a href="prison-addicts.html#cb13-11" aria-hidden="true" tabindex="-1"></a>  <span class="fu">tribble</span>(</span>
+<span id="cb13-12"><a href="prison-addicts.html#cb13-12" aria-hidden="true" tabindex="-1"></a>    <span class="sc">~</span>model, <span class="sc">~</span>family,</span>
+<span id="cb13-13"><a href="prison-addicts.html#cb13-13" aria-hidden="true" tabindex="-1"></a>    m.weibull, <span class="st">&quot;Weibull&quot;</span>,</span>
+<span id="cb13-14"><a href="prison-addicts.html#cb13-14" aria-hidden="true" tabindex="-1"></a>    m.exponential, <span class="st">&quot;Exponential&quot;</span></span>
+<span id="cb13-15"><a href="prison-addicts.html#cb13-15" aria-hidden="true" tabindex="-1"></a>  ) <span class="sc">%&gt;%</span> </span>
+<span id="cb13-16"><a href="prison-addicts.html#cb13-16" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb13-17"><a href="prison-addicts.html#cb13-17" aria-hidden="true" tabindex="-1"></a>    <span class="fu">mutate</span>(<span class="at">model =</span> <span class="fu">map</span>(model, broom<span class="sc">::</span>tidy, <span class="at">conf.int =</span> <span class="cn">TRUE</span>)) <span class="sc">%&gt;%</span> </span>
+<span id="cb13-18"><a href="prison-addicts.html#cb13-18" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb13-19"><a href="prison-addicts.html#cb13-19" aria-hidden="true" tabindex="-1"></a>    <span class="fu">unnest</span>(<span class="at">cols =</span> <span class="fu">c</span>(model)) <span class="sc">%&gt;%</span> </span>
+<span id="cb13-20"><a href="prison-addicts.html#cb13-20" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb13-21"><a href="prison-addicts.html#cb13-21" aria-hidden="true" tabindex="-1"></a>    <span class="co"># Bring in the estimated scale parameters</span></span>
+<span id="cb13-22"><a href="prison-addicts.html#cb13-22" aria-hidden="true" tabindex="-1"></a>    <span class="fu">mutate</span>(<span class="at">scale_param =</span> <span class="fu">case_when</span>(</span>
+<span id="cb13-23"><a href="prison-addicts.html#cb13-23" aria-hidden="true" tabindex="-1"></a>      family <span class="sc">==</span> <span class="st">&quot;Exponential&quot;</span> <span class="sc">~</span> m.exponential<span class="sc">$</span>scale,</span>
+<span id="cb13-24"><a href="prison-addicts.html#cb13-24" aria-hidden="true" tabindex="-1"></a>      family <span class="sc">==</span> <span class="st">&quot;Weibull&quot;</span> <span class="sc">~</span> m.weibull<span class="sc">$</span>scale</span>
+<span id="cb13-25"><a href="prison-addicts.html#cb13-25" aria-hidden="true" tabindex="-1"></a>    )) <span class="sc">%&gt;%</span> </span>
+<span id="cb13-26"><a href="prison-addicts.html#cb13-26" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb13-27"><a href="prison-addicts.html#cb13-27" aria-hidden="true" tabindex="-1"></a>    <span class="co"># Convert estimates to hazard ratios</span></span>
+<span id="cb13-28"><a href="prison-addicts.html#cb13-28" aria-hidden="true" tabindex="-1"></a>    <span class="fu">mutate</span>(</span>
+<span id="cb13-29"><a href="prison-addicts.html#cb13-29" aria-hidden="true" tabindex="-1"></a>      <span class="at">estimate  =</span> <span class="fu">exp</span>(estimate <span class="sc">*</span> <span class="sc">-</span><span class="dv">1</span> <span class="sc">*</span> scale_param),</span>
+<span id="cb13-30"><a href="prison-addicts.html#cb13-30" aria-hidden="true" tabindex="-1"></a>      <span class="at">std.error =</span> <span class="fu">exp</span>(std.error <span class="sc">*</span> <span class="sc">-</span><span class="dv">1</span> <span class="sc">*</span> scale_param),</span>
+<span id="cb13-31"><a href="prison-addicts.html#cb13-31" aria-hidden="true" tabindex="-1"></a>      <span class="at">conf.low =</span> <span class="fu">exp</span>(conf.low <span class="sc">*</span> <span class="sc">-</span><span class="dv">1</span> <span class="sc">*</span> scale_param),</span>
+<span id="cb13-32"><a href="prison-addicts.html#cb13-32" aria-hidden="true" tabindex="-1"></a>      <span class="at">conf.high =</span> <span class="fu">exp</span>(conf.high <span class="sc">*</span> <span class="sc">-</span><span class="dv">1</span> <span class="sc">*</span> scale_param)</span>
+<span id="cb13-33"><a href="prison-addicts.html#cb13-33" aria-hidden="true" tabindex="-1"></a>    )</span>
+<span id="cb13-34"><a href="prison-addicts.html#cb13-34" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb13-35"><a href="prison-addicts.html#cb13-35" aria-hidden="true" tabindex="-1"></a>) <span class="sc">%&gt;%</span> </span>
+<span id="cb13-36"><a href="prison-addicts.html#cb13-36" aria-hidden="true" tabindex="-1"></a>  </span>
+<span id="cb13-37"><a href="prison-addicts.html#cb13-37" aria-hidden="true" tabindex="-1"></a>  <span class="fu">filter</span>(<span class="sc">!</span>term <span class="sc">%in%</span> <span class="fu">c</span>(<span class="st">&quot;Log(scale)&quot;</span>, <span class="st">&quot;(Intercept)&quot;</span>)) <span class="sc">%&gt;%</span> </span>
+<span id="cb13-38"><a href="prison-addicts.html#cb13-38" aria-hidden="true" tabindex="-1"></a>  </span>
+<span id="cb13-39"><a href="prison-addicts.html#cb13-39" aria-hidden="true" tabindex="-1"></a>  <span class="fu">ggplot</span>(<span class="fu">aes</span>(<span class="at">x =</span> term, <span class="at">y=</span>estimate, <span class="at">ymin=</span>conf.low, <span class="at">ymax=</span>conf.high, <span class="at">colour =</span> family)) <span class="sc">+</span></span>
+<span id="cb13-40"><a href="prison-addicts.html#cb13-40" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_pointrange</span>(<span class="at">position =</span> <span class="fu">position_dodge</span>(<span class="at">width =</span> .<span class="dv">2</span>)) <span class="sc">+</span></span>
+<span id="cb13-41"><a href="prison-addicts.html#cb13-41" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_hline</span>(<span class="at">yintercept=</span><span class="dv">1</span>, <span class="at">lty=</span><span class="dv">2</span>) <span class="sc">+</span>  </span>
+<span id="cb13-42"><a href="prison-addicts.html#cb13-42" aria-hidden="true" tabindex="-1"></a>  <span class="fu">coord_flip</span>() <span class="sc">+</span>  </span>
+<span id="cb13-43"><a href="prison-addicts.html#cb13-43" aria-hidden="true" tabindex="-1"></a>  <span class="fu">xlab</span>(<span class="st">&quot;Predictor&quot;</span>) <span class="sc">+</span> </span>
+<span id="cb13-44"><a href="prison-addicts.html#cb13-44" aria-hidden="true" tabindex="-1"></a>  <span class="fu">ylab</span>(<span class="st">&quot;Hazard Ratio (95% CI)&quot;</span>) <span class="sc">+</span></span>
+<span id="cb13-45"><a href="prison-addicts.html#cb13-45" aria-hidden="true" tabindex="-1"></a>  <span class="fu">scale_colour_manual</span>(<span class="at">values=</span><span class="fu">c</span>(<span class="st">&quot;deepskyblue4&quot;</span>, <span class="st">&quot;springgreen4&quot;</span>, <span class="st">&quot;burlywood4&quot;</span>, <span class="st">&quot;antiquewhite4&quot;</span>)) <span class="sc">+</span></span>
+<span id="cb13-46"><a href="prison-addicts.html#cb13-46" aria-hidden="true" tabindex="-1"></a>  <span class="fu">theme_bw</span>() <span class="sc">+</span></span>
+<span id="cb13-47"><a href="prison-addicts.html#cb13-47" aria-hidden="true" tabindex="-1"></a>  <span class="fu">theme</span>(</span>
+<span id="cb13-48"><a href="prison-addicts.html#cb13-48" aria-hidden="true" tabindex="-1"></a>    <span class="at">plot.title =</span> <span class="fu">element_text</span>(<span class="at">face =</span> <span class="st">&quot;bold&quot;</span>, <span class="at">size =</span> <span class="dv">12</span>),</span>
+<span id="cb13-49"><a href="prison-addicts.html#cb13-49" aria-hidden="true" tabindex="-1"></a>    <span class="at">legend.background =</span> <span class="fu">element_rect</span>(<span class="at">fill =</span> <span class="st">&quot;white&quot;</span>, <span class="at">size =</span> <span class="dv">4</span>, <span class="at">colour =</span> <span class="st">&quot;white&quot;</span>),</span>
+<span id="cb13-50"><a href="prison-addicts.html#cb13-50" aria-hidden="true" tabindex="-1"></a>    <span class="at">legend.justification =</span> <span class="fu">c</span>(<span class="dv">0</span>, <span class="dv">1</span>),</span>
+<span id="cb13-51"><a href="prison-addicts.html#cb13-51" aria-hidden="true" tabindex="-1"></a>    <span class="at">legend.position =</span> <span class="st">&quot;bottom&quot;</span>,</span>
+<span id="cb13-52"><a href="prison-addicts.html#cb13-52" aria-hidden="true" tabindex="-1"></a>    <span class="at">axis.ticks =</span> <span class="fu">element_line</span>(<span class="at">colour =</span> <span class="st">&quot;grey70&quot;</span>, <span class="at">size =</span> <span class="fl">0.2</span>),</span>
+<span id="cb13-53"><a href="prison-addicts.html#cb13-53" aria-hidden="true" tabindex="-1"></a>    <span class="at">panel.grid.major =</span> <span class="fu">element_line</span>(<span class="at">colour =</span> <span class="st">&quot;grey70&quot;</span>, <span class="at">size =</span> <span class="fl">0.2</span>),</span>
+<span id="cb13-54"><a href="prison-addicts.html#cb13-54" aria-hidden="true" tabindex="-1"></a>    <span class="at">panel.grid.minor =</span> <span class="fu">element_blank</span>()</span>
+<span id="cb13-55"><a href="prison-addicts.html#cb13-55" aria-hidden="true" tabindex="-1"></a>  )</span></code></pre></div>
+<p><img src="_main_files/figure-html/unnamed-chunk-17-1.png" width="816" /></p>
+<p>Interesting, seems like the parametric models both report smaller effects than the classic Cox, and the Weibull model is also much more confident in its estimates, having smaller standard errors. That seems odd to me, given that it has more parameters to estimate and therefore more parameters to be uncertain about.</p>
+<p>Now let’s compare the three parametric models with respect to their estimated acceleration factors for each predictor. I find the conversions required between these different interpretations makes me feel confused sometimes, but the <strong>rstanarm</strong> documentation spells it out clearly:</p>
+<blockquote>
+<p>“Under an AFT formulation the quantity exp (−βp(t)) is referred to as an acceleration factor and the quantity exp (βp(t)) is referred to as a survival time ratio.”</p>
+</blockquote>
+<p>Cool. I find the idea of an acceleration factor more intuitive than a survival time ratio, so that’s what I’ll go with.</p>
+<p><img src="_main_files/figure-html/unnamed-chunk-18-1.png" width="816" /></p>
+<p>The log-logistic estimates seem to be more extreme than either of the other two models. And once again, the Weibull model is the most conservative and most confident in its estimate.</p>
+<p>We can also plot the different baseline hazard functions against each other?</p>
+<p>It would be nice to Would be nice to do a plot of the different ‘recovered’ survival curves against the ‘empirical’ Kaplan-Meier curve. Let’s try that. I had some trouble constructing survival curves from the <strong>survival</strong> package’s <code>survreg</code> objects, so here I’ve refit the models using the <strong>flexsurv</strong> package, which lets you construct survival curves in a straightforward way. I haven’t just replaced the <code>survreg</code>s with <code>flexsurvreg</code>s because the two packages seem to report the scale and shape parameters differently, and I think the above workflow is worth keeping for posterity, given that the <strong>survival</strong> package is <em>the</em> canonical package.</p>
+<p>Ok, now for some survival curves:</p>
+<p><img src="_main_files/figure-html/unnamed-chunk-19-1.png" width="816" /></p>
+<p>The black curve is the Kaplan-Meier estimates from the full sample. All of the models seem to fit pretty well, albeit with different strengths and weaknesses. Cox consistently overestimates risk compared to the Kaplan-Meier curve, while the Exponential model tends to underestimate it. Weibull and Log-Logistic look very similar, with both models overestimating hazard at first and then crossing the Kaplan-Meier curve to underestimate it. Exponential and Log-Logistic both overestimate hazard at the last little bit, which makes sense given that the sample size gets pretty small over there.</p>
+<p>For the parametric models, we can also compare the log likelihoods and AICs to get a more methodical comparison of their goodnesses-of-fit. We can’t include the Cox model here because it is fit by maximizing the <em>partial</em> likelihood, and you’re not allowed to compare the likelihoods of models fit by maximizaing different likelihoods. This is the same reason why you’re not allowed to compare the log likelihoods of an OLS model and a poisson model, for example: OLS is fit by maximizing the gaussian likelihood, while a poisson GLM is fit by maximizing the poisson likelihood.</p>
+<table class="table table-striped" style="margin-left: auto; margin-right: auto;">
+<caption>
+<span id="tab:unnamed-chunk-20">Table 1.8: </span>
+</caption>
+<thead>
+<tr>
+<th style="text-align:left;">
+model
+</th>
+<th style="text-align:right;">
+-2LL
+</th>
+<th style="text-align:right;">
+AIC
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:left;">
+Exponential
+</td>
+<td style="text-align:right;">
+-1104.268
+</td>
+<td style="text-align:right;">
+2214.535
+</td>
+</tr>
+<tr>
+<td style="text-align:left;">
+Weibull
+</td>
+<td style="text-align:right;">
+-1096.934
+</td>
+<td style="text-align:right;">
+2201.868
+</td>
+</tr>
+<tr>
+<td style="text-align:left;">
+Log-Logistic
+</td>
+<td style="text-align:right;">
+-1099.960
+</td>
+<td style="text-align:right;">
+2207.919
+</td>
+</tr>
+</tbody>
+</table>
+<p>tribble(</p>
+<p>~model, ~`-2LL`, ~AIC,</p>
+<p>“Exponential”, max(m.exponential$loglik), AIC(m.exponential),</p>
+<p>“Weibull”, max(m.weibull$loglik), AIC(m.weibull),</p>
+<p>“Log-Logistic”, max(m.loglogistic$loglik), AIC(m.loglogistic)</p>
+<p>)</p>
+<p>ACTUALLY NO</p>
+<p>“AIC cannot be used to compare parametric and semi-parametric models, however, since parametric models are based on observed event times and semi-parametric models are based on the order of event times.”</p>
+<p>can also make a plot comparing their log-likelihoods.</p>
+</div>
+<div id="bayesian-spline-model-via-rstanarm" class="section level2 hasAnchor" number="1.7">
+<h2><span class="header-section-number">1.7</span> Bayesian Spline Model via rstanarm<a href="prison-addicts.html#bayesian-spline-model-via-rstanarm" class="anchor-section" aria-label="Anchor link to header"></a></h2>
+<p>Way back in the first section we plotted the kernel-smoothed approximation of baseline hazard, and it looked sort of parabolic. Here it is again:</p>
+<p><img src="_main_files/figure-html/unnamed-chunk-21-1.png" width="816" /></p>
+<p>This parabolic-ness suggests that people face high hazard at first, then it steadily falls to some valley, then steadily increases again. Maybe this pattern of baseline hazard is something an expert in this area would have anticipated purely based on their background knowledge, before seeing the data. If so, then it might have made sense to try some kind of parametric model.</p>
 <p><a href="https://github.com/alex-rand/survival-analysis-practice.git" class="uri">https://github.com/alex-rand/survival-analysis-practice.git</a></p>
 
 </div>
